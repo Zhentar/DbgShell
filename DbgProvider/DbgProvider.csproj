@@ -104,6 +104,7 @@
     <Compile Include="public\Commands\AddDbgExtensionCommand.cs" />
     <Compile Include="public\Commands\AliasCommands.cs" />
     <Compile Include="public\Commands\BreakpointListCommands.cs" />
+    <Compile Include="public\Commands\SearchDbgMemoryCommand.cs" />
     <Compile Include="public\Commands\FindWindbgDirCommand.cs" />
     <Compile Include="public\Commands\GetClrHeapCommand.cs" />
     <Compile Include="public\Commands\GetClrObjectCommand.cs" />

@@ -2251,6 +2251,34 @@ namespace MS.Dbg
             CheckHr( hr );
         } // end _CheckMemoryReadHr()
 
+        private bool _TryCheckMemoryReadHr(int hr)
+        {
+            if ((HR_ERROR_READ_FAULT == hr) ||
+                (HR_STATUS_NO_PAGEFILE == hr) ||
+                (E_NOINTERFACE == hr) ||
+                (HR_STATUS_NO_MORE_ENTRIES == hr))
+            {
+                return false;
+            }
+            CheckHr(hr);
+            return true;
+        }
+
+        public bool SearchMemory(ulong startAddress, ulong endAddress, byte[] value, bool writableOnly, out ulong matchAddress)
+        {
+            matchAddress = 0;
+            if(startAddress >= endAddress) { return false; }
+            ulong matchOffset = 0;
+            bool success = ExecuteOnDbgEngThread(() =>
+            {
+                var flags = writableOnly ? DEBUG_VSEARCH.WRITABLE_ONLY : DEBUG_VSEARCH.DEFAULT;
+                int hr = m_debugDataSpaces.SearchVirtual2(startAddress, endAddress - startAddress, flags, value, 1, out matchOffset);
+                return _TryCheckMemoryReadHr(hr);
+            });
+            matchAddress = matchOffset;
+            return success;
+        }
+
         public ulong[] ReadMemPointers( ulong address, uint numDesired )
         {
             // TODO: or should the default be to throw if we didn't read the desired number?
