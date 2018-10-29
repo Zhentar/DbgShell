@@ -5,6 +5,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Management.Automation;
 using System.Runtime.InteropServices;
 using System.Runtime.ExceptionServices;
 using System.Text;
@@ -6093,12 +6094,11 @@ namespace MS.Dbg
         }
 
 
-        public IEnumerable< DbgValue > EnumerateLIST_ENTRY( dynamic head,
+        public IEnumerable< PSObject > EnumerateLIST_ENTRY( dynamic head,
                                                             DbgUdtTypeInfo entryType,
                                                             string listEntryMemberPath )
         {
-            // Workaround for INT1a713231 ("Properties dynamically added to PSObject are not seen by C# "dynamic""):
-            head = head.WrappingPSObject;
+            head = head;
 
             if( null == head )
                 throw new ArgumentNullException( "head" );
@@ -6145,46 +6145,12 @@ namespace MS.Dbg
 
             ulong headAddr = sym.Address;
 
-            dynamic curListEntry = head.Flink;
-
             int idx = 0;
-
-            while( curListEntry != headAddr )
+            foreach (var entry in this.EnumerateLIST_ENTRY_raw(headAddr, 0))
             {
-                // If things go badly, this is likely where we find out--curListEntry will
-                // be a DbgValueError, and thus won't have a DbgGetPointer() method. We
-                // can make the error a little nicer.
-                if( curListEntry is DbgValueError )
-                {
-                    throw new DbgProviderException( Util.Sprintf( "LIST_ENTRY enumeration failed: {0}",
-                                                                  Util.GetExceptionMessages( curListEntry.DbgGetError() ) ),
-                                                    "LIST_ENTRY_EnumerationFailed",
-                                                    System.Management.Automation.ErrorCategory.ReadError,
-                                                    (Exception) curListEntry.DbgGetError(),
-                                                    head );
-                }
-
-                // N.B. curListEntry is a pointer, but we need to get the raw pointer else
-                // pointer arithmetic will mess things up.
-
-                ulong curItemAddr = curListEntry.DbgGetPointer() - listEntryOffset;
-
-                dynamic val = Debugger.GetValueForAddressAndType( curItemAddr,
-                                                                  entryType,
-                                                                  itemNamePrefix + idx.ToString(),
-                                                                  false,
-                                                                  false );
-                yield return val;
-
-                // TODO:
-                // $curListEntry = Invoke-Expression "`$val.$ListEntryMemberName.Flink"
-                //
-                // There's not a simple way to do this in C#...
-                // BUT... I think it can be done by building dynamic callsites.
-                throw new NotImplementedException();
-
-                //idx++;
-            } // end while( cur != head )
+                yield return GetValueForAddressAndType(entry + listEntryOffset, entryType, itemNamePrefix + idx.ToString(), false, false);
+                idx++;
+            }
         } // end EnumerateLIST_ENTRY()
 
 
