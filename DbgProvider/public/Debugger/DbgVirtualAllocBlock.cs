@@ -69,12 +69,48 @@ namespace MS.Dbg
                         {
                             return "<unknown>";
                         }
-                    case MEM.MAPPED:
                     case MEM.PRIVATE:
+                        var lookup = GetHeapMap(Debugger);
+                        if (lookup.TryGetValue(this.BaseAddress, out var heapBase))
+                        {
+                            return $"Heap {heapBase:X8}";
+                        }
+                        goto default;
+                    case MEM.MAPPED:
                     default:
                         return "";
                 }
             }
+        }
+
+
+        //TODO: some might consider calling this a "cache" somewhat disingenuous, given the complete absence of any invalidation mechanism 
+        private static Dictionary<ulong, ulong> m_HeapCache;
+
+        private static Dictionary<ulong, ulong> GetHeapMap(DbgEngDebugger debugger)
+        {
+            if (m_HeapCache != null)
+            {
+                return m_HeapCache;
+            }
+
+            m_HeapCache = new Dictionary<ulong, ulong>();
+            foreach (var heapBase in AllHeaps(debugger))
+            {
+                foreach (var segment in BlocksForHeap(heapBase, debugger))
+                {
+                    m_HeapCache[segment.BaseAddress] = heapBase;
+                }
+            }
+
+            return m_HeapCache;
+        }
+
+        public static IEnumerable<ulong> AllHeaps(DbgEngDebugger debugger)
+        {
+            dynamic peb = DbgPseudoRegisterInfo.GetDbgPsedoRegisterInfo(debugger, "$peb").Value;
+            uint numberOfHeaps = peb.NumberOfHeaps.ToUint32(null);
+            return debugger.ReadMemPointers((ulong)peb.ProcessHeaps.DbgGetPointer(), numberOfHeaps);
         }
 
 
@@ -118,6 +154,11 @@ namespace MS.Dbg
             {
                 uint baseAddress = (uint)segment.BaseAddress.DbgGetPointer();
                 yield return new DbgVirtualAllocBlock(baseAddress, debugger);
+            }
+
+            foreach (var heapBlock in debugger.EnumerateLIST_ENTRY_raw(heap.VirtualAllocdBlocks.DbgGetOperativeSymbol().Address, 0))
+            {
+                yield return new DbgVirtualAllocBlock(heapBlock, debugger);
             }
         }
     }
