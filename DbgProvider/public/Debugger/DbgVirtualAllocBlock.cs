@@ -1,10 +1,11 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Diagnostics.Runtime.Interop;
 
 namespace MS.Dbg
 {
-    public class DbgVirtualAllocBlock
+    public class DbgVirtualAllocBlock : ISupportColor
     {
         public static IEnumerable<DbgVirtualAllocBlock> AllBlocks(DbgEngDebugger debugger)
         {
@@ -32,6 +33,10 @@ namespace MS.Dbg
 
         public MEM Type { get; }
 
+        //TODO: dirty. Fix once done prototyping.
+        public DbgVirtualAllocBlock(ulong addr) : this(addr, DbgProvider.GetDebugger(""))
+        { }
+
         public DbgVirtualAllocBlock(ulong addr, DbgEngDebugger debugger)
         {
             var info = debugger.QueryVirtual(addr);
@@ -54,52 +59,70 @@ namespace MS.Dbg
 
         private readonly DbgEngDebugger Debugger;
 
-        public string Description
+        public ColorString Description => MemoryGroup.Name;
+
+
+        public DbgMemoryGroup MemoryGroup
         {
             get
             {
                 switch (Type)
                 {
                     case MEM.IMAGE:
-                        try
+                        if (!m_ModuleCache.TryGetValue(this.BaseAddress, out var memoryGroup))
                         {
-                            return Debugger.GetModuleByAddress(BaseAddress).Name;
+                            memoryGroup = (m_ModuleCache[BaseAddress] = new DbgMemoryGroup(GetModuleName(BaseAddress)));
                         }
-                        catch (DbgEngException)
-                        {
-                            return "<unknown>";
-                        }
+                        return memoryGroup;
                     case MEM.PRIVATE:
                         var lookup = GetHeapMap(Debugger);
-                        if (lookup.TryGetValue(this.BaseAddress, out var heapBase))
+                        if (lookup.TryGetValue(this.BaseAddress, out var heapGroup))
                         {
-                            return $"Heap {heapBase:X8}";
+                            return heapGroup;
                         }
                         goto default;
                     case MEM.MAPPED:
+                        return mappedGroup;
                     default:
-                        return "";
+                        return unknownGroup;
                 }
+
+                ColorString GetModuleName(ulong address)
+                {
+                    try
+                    {
+                        return new ColorString(ConsoleColor.Cyan, Debugger.GetModuleByAddress(address).Name);
+                    }
+                    catch (DbgEngException)
+                    {
+                        return new ColorString(ConsoleColor.Gray, $"<module {address:X}>");
+                    }
+                }
+
             }
         }
 
-
+        private static readonly DbgMemoryGroup unknownGroup = new DbgMemoryGroup(new ColorString(ConsoleColor.DarkGray, "<unknown>"));
+        private static readonly DbgMemoryGroup mappedGroup = new DbgMemoryGroup(new ColorString(ConsoleColor.DarkMagenta, "<MAPPED>"));
         //TODO: some might consider calling this a "cache" somewhat disingenuous, given the complete absence of any invalidation mechanism 
-        private static Dictionary<ulong, ulong> m_HeapCache;
+        private static Dictionary<ulong, DbgMemoryGroup> m_HeapCache;
+        private static Dictionary<ulong, DbgMemoryGroup> m_ModuleCache = new Dictionary<ulong, DbgMemoryGroup>();
 
-        private static Dictionary<ulong, ulong> GetHeapMap(DbgEngDebugger debugger)
+        private static Dictionary<ulong, DbgMemoryGroup> GetHeapMap(DbgEngDebugger debugger)
         {
             if (m_HeapCache != null)
             {
                 return m_HeapCache;
             }
 
-            m_HeapCache = new Dictionary<ulong, ulong>();
+            m_HeapCache = new Dictionary<ulong, DbgMemoryGroup>();
             foreach (var heapBase in AllHeaps(debugger))
             {
+                var group = DbgMemoryGroup.FromHeapBase(heapBase, debugger);
+
                 foreach (var segment in BlocksForHeap(heapBase, debugger))
                 {
-                    m_HeapCache[segment.BaseAddress] = heapBase;
+                    m_HeapCache[segment.BaseAddress] = group;
                 }
             }
 
@@ -161,5 +184,36 @@ namespace MS.Dbg
                 yield return new DbgVirtualAllocBlock(heapBlock, debugger);
             }
         }
+
+        public ColorString ToColorString()
+        {
+            var cs = new ColorString("VirtualAlloc ");
+            cs.Append(DbgProvider.FormatAddress(BaseAddress, Debugger.TargetIs32Bit, true, true, ConsoleColor.DarkYellow));
+            cs.Append(" - ");
+            cs.Append(DbgProvider.FormatAddress(BaseAddress + BlockSize, Debugger.TargetIs32Bit, true, true, ConsoleColor.DarkYellow));
+            cs.Append("  " + Type);
+            cs.Append(Description);
+            return cs;
+        }
+    }
+
+    public class DbgMemoryGroup : ISupportColor
+    {
+        public static DbgMemoryGroup FromHeapBase(ulong heapBase, DbgEngDebugger debugger)
+        {
+            ColorString name =
+                new ColorString("Heap ").Append(DbgProvider.FormatAddress(heapBase, debugger.TargetIs32Bit, true, true, ConsoleColor.DarkYellow));
+            return new DbgMemoryGroup(name);
+        }
+
+        public DbgMemoryGroup(ColorString name)
+        {
+            Name = name;
+        }
+
+        public ColorString Name { get; }
+
+        //public IReadOnlyList<DbgVirtualAllocBlock> AllocBlocks { get; }
+        public ColorString ToColorString() => Name;
     }
 }
