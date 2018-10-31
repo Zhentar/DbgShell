@@ -5,7 +5,7 @@ using Microsoft.Diagnostics.Runtime.Interop;
 
 namespace MS.Dbg
 {
-    public class DbgVirtualAllocBlock : ISupportColor
+    public class DbgVirtualAllocBlock : ISupportColor, IEquatable<DbgVirtualAllocBlock>
     {
         public static IEnumerable<DbgVirtualAllocBlock> AllBlocks(DbgEngDebugger debugger)
         {
@@ -191,9 +191,31 @@ namespace MS.Dbg
             cs.Append(DbgProvider.FormatAddress(BaseAddress, Debugger.TargetIs32Bit, true, true, ConsoleColor.DarkYellow));
             cs.Append(" - ");
             cs.Append(DbgProvider.FormatAddress(BaseAddress + BlockSize, Debugger.TargetIs32Bit, true, true, ConsoleColor.DarkYellow));
-            cs.Append("  " + Type);
+            cs.Append("  MEM_" + Type + "  ");
             cs.Append(Description);
             return cs;
+        }
+
+        public override bool Equals(object obj)
+        {
+            return obj is DbgVirtualAllocBlock other && Equals(other);
+        }
+
+        public bool Equals(DbgVirtualAllocBlock other)
+        {
+            if (ReferenceEquals(null, other)) return false;
+            if (ReferenceEquals(this, other)) return true;
+            return BaseAddress == other.BaseAddress && BlockSize == other.BlockSize;
+        }
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                var hashCode =  BaseAddress.GetHashCode();
+                hashCode = (hashCode * 397) ^ BlockSize.GetHashCode();
+                return hashCode;
+            }
         }
     }
 

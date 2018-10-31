@@ -114,7 +114,7 @@ namespace MS.Dbg.Formatting.Commands
 
         protected PsContext m_groupByHeaderCtx;
 
-        private void _WriteGroupByGroupHeader( object newResult )
+        private void _WriteGroupByGroupHeader( object newResult, bool isDefaultGroupBy)
         {
             PsContext headerCtx;
             bool preserveHeaderContext;
@@ -140,6 +140,11 @@ namespace MS.Dbg.Formatting.Commands
                         WriteObject( val );
                 }
             }
+            else if (isDefaultGroupBy)
+            {   //If something makes sense to be the default group by, it's probably clear what it is from context without a special label
+                //And we probably don't want indentation & blank lines surrounding something that is printed all the time
+                WriteObject(ObjectToMarkedUpString(newResult).ToString());
+            }
             else
             {
                 WriteObject( String.Empty );
@@ -164,9 +169,11 @@ namespace MS.Dbg.Formatting.Commands
             if( Stopping )
                 return;
 
+            bool isDefaultGroupBy = false;
             if( (null == GroupBy) && !MyInvocation.BoundParameters.ContainsKey( "GroupBy" ) )
             {
                 GroupBy = GetViewDefinedGroupBy();
+                isDefaultGroupBy = true;
             }
 
             m_pipeIndex++;
@@ -182,7 +189,7 @@ namespace MS.Dbg.Formatting.Commands
                     if( m_pipeIndex > 0 )
                         WriteObject( String.Empty ); // this seems ugly...
 
-                    _WriteGroupByGroupHeader( newResult );
+                    _WriteGroupByGroupHeader( newResult, true );
                 }
             }
         } // end ProcessRecord()
@@ -346,48 +353,28 @@ namespace MS.Dbg.Formatting.Commands
 
 
         private bool _GroupByResultIsDifferent( object lastResult, object newResult )
-        {
-            if( null == lastResult )
+        {        
+            switch (lastResult)
             {
-                return null != newResult;
+                case string lastString when newResult is string newString:
+                    // Strings in PS are generally case-insensitive.
+                    return 0 != Util.Strcmp_OI( lastString, newString );
+                case IEnumerable lastEnumerable when newResult is IEnumerable newEnumerable:
+                {
+                    var lastEnumerator = lastEnumerable.GetEnumerator();
+                    var newEnumerator = newEnumerable.GetEnumerator();
+                    {
+                        while (lastEnumerator.MoveNext())
+                        {
+                            if (!(newEnumerator.MoveNext() && EqualityComparer<object>.Default.Equals(lastEnumerator.Current, newEnumerator.Current))) return true;
+                        }
+                        if (newEnumerator.MoveNext()) return true;
+                    }
+                    return false;
+                }
+                default:
+                    return !EqualityComparer<object>.Default.Equals(lastResult, newResult );
             }
-            else if( null == newResult )
-            {
-                return null != lastResult;
-            }
-
-            // They are both not null.
-
-            // TODO: I think I should be using LanguagePrimitives to do this.
-
-            if( lastResult.GetType() != newResult.GetType() )
-            {
-                // Even though they are not the same type, they could be comparable
-                // via some IEquatable interface or something.
-                return lastResult != newResult;
-            }
-
-            if( lastResult is PSObject )
-            {
-                // TODO: Bug? What if they are PSOs wrapping different types?
-                PSObject lastPso = (PSObject) lastResult;
-                PSObject newPso = (PSObject) newResult;
-                return lastPso.BaseObject != newPso.BaseObject;
-            }
-
-            if( lastResult is string )
-            {
-                // Strings in PS are generally case-insensitive.
-                string lastString = (string) lastResult;
-                string newString = (string) newResult;
-                return 0 != Util.Strcmp_OI( lastString, newString );
-            }
-            // TODO: need to do a collection comparison...
-         // if( lastResult is Collection<PSObject> )
-         // {
-         // }
-
-            return !lastResult.Equals( newResult );
         } // end _GroupByResultIsDifferent()
 
 
