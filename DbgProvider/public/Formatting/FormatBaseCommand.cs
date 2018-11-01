@@ -169,11 +169,9 @@ namespace MS.Dbg.Formatting.Commands
             if( Stopping )
                 return;
 
-            bool isDefaultGroupBy = false;
             if( (null == GroupBy) && !MyInvocation.BoundParameters.ContainsKey( "GroupBy" ) )
             {
                 GroupBy = GetViewDefinedGroupBy();
-                isDefaultGroupBy = true;
             }
 
             m_pipeIndex++;
@@ -189,7 +187,7 @@ namespace MS.Dbg.Formatting.Commands
                     if( m_pipeIndex > 0 )
                         WriteObject( String.Empty ); // this seems ugly...
 
-                    _WriteGroupByGroupHeader( newResult, isDefaultGroupBy );
+                    _WriteGroupByGroupHeader( newResult, !MyInvocation.BoundParameters.ContainsKey("GroupBy"));
                 }
             }
         } // end ProcessRecord()

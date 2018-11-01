@@ -4,6 +4,7 @@ using System.Linq;
 using System.Management.Automation;
 using System.Text;
 using System.Threading.Tasks;
+using Microsoft.CSharp.RuntimeBinder;
 
 namespace MS.Dbg.Commands
 {
@@ -19,11 +20,16 @@ namespace MS.Dbg.Commands
         {
             public override object Transform(EngineIntrinsics engineIntrinsics, object inputData)
             {
-                dynamic input = inputData;
-                if (input.Address is ulong address)
+                try
                 {
-                    return address;
+                    dynamic input = inputData;
+                    if (input.Address is ulong address)
+                    {
+                        return address;
+                    }
                 }
+                catch (RuntimeBinderException) { } //There's probably a better way to do this
+
                 return base.Transform(engineIntrinsics, inputData);
             }
         }

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using Microsoft.Diagnostics.Runtime.Interop;
 
 namespace MS.Dbg
@@ -37,9 +38,11 @@ namespace MS.Dbg
         public DbgVirtualAllocBlock(ulong addr) : this(addr, DbgProvider.GetDebugger(""))
         { }
 
-        public DbgVirtualAllocBlock(ulong addr, DbgEngDebugger debugger)
+        public DbgVirtualAllocBlock(ulong addr, DbgEngDebugger debugger) : this(debugger.QueryVirtual(addr), debugger)
+        { }
+
+        public DbgVirtualAllocBlock(MEMORY_BASIC_INFORMATION64 info, DbgEngDebugger debugger)
         {
-            var info = debugger.QueryVirtual(addr);
             Type = info.Type; //I am under the impression that an alloc block can only be one type
             var commitSize = 0ul;
             ulong currAddress = BaseAddress = info.AllocationBase;
@@ -57,7 +60,7 @@ namespace MS.Dbg
             Debugger = debugger;
         }
 
-        private readonly DbgEngDebugger Debugger;
+        protected readonly DbgEngDebugger Debugger;
 
         public ColorString Description => MemoryGroup.Name;
 
@@ -71,7 +74,7 @@ namespace MS.Dbg
                     case MEM.IMAGE:
                         if (!m_ModuleCache.TryGetValue(this.BaseAddress, out var memoryGroup))
                         {
-                            memoryGroup = (m_ModuleCache[BaseAddress] = new DbgMemoryGroup(GetModuleName(BaseAddress)));
+                            memoryGroup = (m_ModuleCache[BaseAddress] = new DbgMemoryGroup(GetModuleName(BaseAddress), BaseAddress));
                         }
                         return memoryGroup;
                     case MEM.PRIVATE:
@@ -102,8 +105,8 @@ namespace MS.Dbg
             }
         }
 
-        private static readonly DbgMemoryGroup unknownGroup = new DbgMemoryGroup(new ColorString(ConsoleColor.DarkGray, "<unknown>"));
-        private static readonly DbgMemoryGroup mappedGroup = new DbgMemoryGroup(new ColorString(ConsoleColor.DarkMagenta, "<MAPPED>"));
+        private static readonly DbgMemoryGroup unknownGroup = new DbgMemoryGroup(new ColorString(ConsoleColor.DarkGray, "<unknown>"), 0);
+        private static readonly DbgMemoryGroup mappedGroup = new DbgMemoryGroup(new ColorString(ConsoleColor.DarkMagenta, "<MAPPED>"), 0);
         //TODO: some might consider calling this a "cache" somewhat disingenuous, given the complete absence of any invalidation mechanism 
         private static Dictionary<ulong, DbgMemoryGroup> m_HeapCache;
         private static Dictionary<ulong, DbgMemoryGroup> m_ModuleCache = new Dictionary<ulong, DbgMemoryGroup>();
@@ -139,40 +142,9 @@ namespace MS.Dbg
 
         public static IEnumerable<DbgVirtualAllocBlock> BlocksForHeap(ulong heapBase, DbgEngDebugger debugger)
         {
-            var si = DbgHelp.EnumTypesByName(debugger.DebuggerInterface,
-                                                0,
-                                                "ntdll!_HEAP",
-                                                System.Threading.CancellationToken.None).FirstOrDefault();
-            var segmentsi = DbgHelp.EnumTypesByName(debugger.DebuggerInterface,
-                0,
-                "ntdll!_HEAP_SEGMENT",
-                System.Threading.CancellationToken.None).FirstOrDefault();
-            if (null == si)
-            {
-                throw new DbgProviderException("Can't find type ntdll!_HEAP. No symbols?",
-                    "NoHeapType",
-                    System.Management.Automation.ErrorCategory.ObjectNotFound);
-            }
-            if (null == segmentsi)
-            {
-                throw new DbgProviderException("Can't find type ntdll!_HEAP_SEGMENT. No symbols?",
-                    "NoHeapType",
-                    System.Management.Automation.ErrorCategory.ObjectNotFound);
-            }
-            var type = DbgTypeInfo.GetNamedTypeInfo(debugger,
-                si.ModBase,
-                si.TypeIndex,
-                si.Tag,
-                debugger.GetCurrentTarget());
-            var segmenttype = (DbgUdtTypeInfo)DbgTypeInfo.GetNamedTypeInfo(debugger,
-                segmentsi.ModBase,
-                segmentsi.TypeIndex,
-                segmentsi.Tag,
-                debugger.GetCurrentTarget());
-            dynamic heap = new DbgSimpleSymbol(debugger,
-                                                "Heap",
-                                                type,
-                                                heapBase).Value;
+            var heap = GetHeap(heapBase, debugger);
+            var segmenttype = GetHeapSegmentType(debugger);
+
             foreach (dynamic segment in debugger.EnumerateLIST_ENTRY(heap.SegmentList, segmenttype, "SegmentListEntry"))
             {
                 uint baseAddress = (uint)segment.BaseAddress.DbgGetPointer();
@@ -185,13 +157,59 @@ namespace MS.Dbg
             }
         }
 
-        public ColorString ToColorString()
+        internal static DbgUdtTypeInfo GetHeapSegmentType(DbgEngDebugger debugger)
+        {
+            var segmentsi = DbgHelp.EnumTypesByName(debugger.DebuggerInterface,
+                0,
+                "ntdll!_HEAP_SEGMENT",
+                System.Threading.CancellationToken.None).FirstOrDefault();
+            if (null == segmentsi)
+            {
+                throw new DbgProviderException("Can't find type ntdll!_HEAP_SEGMENT. No symbols?",
+                    "NoHeapType",
+                    System.Management.Automation.ErrorCategory.ObjectNotFound);
+            }
+
+            var segmenttype = (DbgUdtTypeInfo) DbgTypeInfo.GetNamedTypeInfo(debugger,
+                segmentsi.ModBase,
+                segmentsi.TypeIndex,
+                segmentsi.Tag,
+                debugger.GetCurrentTarget());
+            return segmenttype;
+        }
+
+        internal static dynamic GetHeap(ulong heapBase, DbgEngDebugger debugger)
+        {
+            var si = DbgHelp.EnumTypesByName(debugger.DebuggerInterface,
+                0,
+                "ntdll!_HEAP",
+                System.Threading.CancellationToken.None).FirstOrDefault();
+
+            if (null == si)
+            {
+                throw new DbgProviderException("Can't find type ntdll!_HEAP. No symbols?",
+                    "NoHeapType",
+                    System.Management.Automation.ErrorCategory.ObjectNotFound);
+            }
+            var type = DbgTypeInfo.GetNamedTypeInfo(debugger,
+                si.ModBase,
+                si.TypeIndex,
+                si.Tag,
+                debugger.GetCurrentTarget());
+            dynamic heap = new DbgSimpleSymbol(debugger,
+                "Heap",
+                type,
+                heapBase).Value;
+            return heap;
+        }
+
+        public virtual ColorString ToColorString()
         {
             var cs = new ColorString("VirtualAlloc ");
             cs.Append(DbgProvider.FormatAddress(BaseAddress, Debugger.TargetIs32Bit, true, true, ConsoleColor.DarkYellow));
             cs.Append(" - ");
             cs.Append(DbgProvider.FormatAddress(BaseAddress + BlockSize, Debugger.TargetIs32Bit, true, true, ConsoleColor.DarkYellow));
-            cs.Append("  MEM_" + Type + "  ");
+            cs.Append($"  MEM_{Type}  ");
             cs.Append(Description);
             return cs;
         }
@@ -217,6 +235,92 @@ namespace MS.Dbg
                 return hashCode;
             }
         }
+
+        public static DbgVirtualAllocBlock GetBlockForAddr(ulong address)
+        {
+            var debugger = DbgProvider.GetDebugger("");
+            var info = debugger.QueryVirtual(address);
+
+            if (GetHeapMap(debugger).TryGetValue(info.AllocationBase, out var heapGroup))
+            {
+                return DbgSpecificSubpieceOfAVirtualAllocBlock.GetSubpieceForHeap(address, info.AllocationBase, heapGroup.BaseAddress, debugger);
+            }
+
+            return new DbgVirtualAllocBlock(info, debugger);
+        }
+    }
+
+    //TODO: get better at naming things
+    public class DbgSpecificSubpieceOfAVirtualAllocBlock : DbgVirtualAllocBlock
+    {
+        [StructLayout(LayoutKind.Explicit)]
+        internal struct _HEAP_ENTRY
+        {
+            [FieldOffset(0)]public ulong AgregateCode;
+            [FieldOffset(0)]public ushort Size;
+            [FieldOffset(2)]public byte Flags;
+            [FieldOffset(3)]public byte SmallTagIndex;
+            [FieldOffset(4)]public ushort PreviousSize;
+            [FieldOffset(6)]public byte LFHFlags;
+            [FieldOffset(7)]public byte UnusedBytes;
+        }
+
+        public static DbgSpecificSubpieceOfAVirtualAllocBlock GetSubpieceForHeap(ulong addr, ulong segmentBase, ulong heapBase, DbgEngDebugger debugger)
+        {
+            var heap = GetHeap(heapBase, debugger);
+            ulong encoding = heap.Encoding.AgregateCode.ToUint64(null); //[sic]
+            var segmenttype = GetHeapSegmentType(debugger);
+            dynamic segment = debugger.GetValueForAddressAndType(segmentBase, segmenttype);
+
+            ulong entryAddr = segment.FirstEntry.DbgGetPointer();
+            while (debugger.TryReadMemAs_integer(entryAddr, 8, false, out var entryValue))
+            {
+                _HEAP_ENTRY entry = new _HEAP_ENTRY { AgregateCode = entryValue ^ encoding };
+                ulong nextAddr = entryAddr + entry.Size * 8u;
+                if (addr < nextAddr)
+                {
+                    bool free = (entry.Flags & 0x1) == 0;
+                    var actualSize = entry.Size * 8u - Math.Max(8u, entry.UnusedBytes); //I don't understand why unused is less than 8 sometimes
+                    return new DbgSpecificSubpieceOfAVirtualAllocBlock(entryAddr + 8, free, actualSize);
+                }
+
+                entryAddr = nextAddr;
+            }
+
+            throw new InvalidOperationException("Address not within heap segment or heap segment corrupt");
+        }
+
+        public DbgSpecificSubpieceOfAVirtualAllocBlock(ulong addr, bool free, ulong size) : base(addr)
+        {
+            Address = addr;
+            IsFree = free;
+            PieceSize = size;
+        }
+        
+
+        public bool IsFree { get; }
+        public ulong Address { get; }
+        public ulong PieceSize { get; }
+
+        public override ColorString ToColorString()
+        {
+            var cs = base.ToColorString();
+            cs.AppendLine();
+            cs.Append("Heap entry body ");
+            cs.Append(DbgProvider.FormatAddress(Address, Debugger.TargetIs32Bit, true, true, ConsoleColor.DarkCyan));
+            cs.Append(" size ");
+            cs.AppendPushPopFg(ConsoleColor.DarkGreen, $"0x{PieceSize:X} ");
+            if (IsFree)
+            {
+                cs.AppendPushPopFgBg(ConsoleColor.Black, ConsoleColor.Gray, "Free");
+            }
+            else
+            {
+                cs.AppendPushPopFg(ConsoleColor.Gray, "Busy");
+            }
+
+            return cs;
+        }
     }
 
     public class DbgMemoryGroup : ISupportColor
@@ -225,15 +329,18 @@ namespace MS.Dbg
         {
             ColorString name =
                 new ColorString("Heap ").Append(DbgProvider.FormatAddress(heapBase, debugger.TargetIs32Bit, true, true, ConsoleColor.DarkYellow));
-            return new DbgMemoryGroup(name);
+            return new DbgMemoryGroup(name, heapBase);
         }
 
-        public DbgMemoryGroup(ColorString name)
+        public DbgMemoryGroup(ColorString name, ulong baseAddress)
         {
             Name = name;
+            BaseAddress = baseAddress;
         }
 
         public ColorString Name { get; }
+
+        public ulong BaseAddress { get; }
 
         //public IReadOnlyList<DbgVirtualAllocBlock> AllocBlocks { get; }
         public ColorString ToColorString() => Name;

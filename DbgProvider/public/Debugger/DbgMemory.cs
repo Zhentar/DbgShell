@@ -105,7 +105,7 @@ namespace MS.Dbg
             IsBigEndian = isBigEndian;
             m_is32Bit = is32bit;
             m_lookupSymbol = lookupSymbol;
-            VirtAlloc = new DbgVirtualAllocBlock(address);
+            VirtAlloc = DbgVirtualAllocBlock.GetBlockForAddr(address);
 
             if( isBigEndian )
                 throw new NotSupportedException( "No support for big-endian data yet." );
