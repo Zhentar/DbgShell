@@ -11,13 +11,30 @@ namespace MS.Dbg.Commands
     [OutputType(typeof(SearchDbgMemoryCommand.SearchResult))]
     public class SearchDbgMemoryCommand : DbgBaseCommand
     {
+        //Problem: want to pipeline things like Get-DbgSymbol in. But Powershell can't figure out which ulong to match to which parameter.
+        //so just grab the address directly.
+        //Still need to consider how to handle DbgMemory (where the address is unlikely to be what you are searching for), and searching
+        //for the values in static symbols
+        public class AggressiveAddressTransformationAttribute : AddressTransformationAttribute
+        {
+            public override object Transform(EngineIntrinsics engineIntrinsics, object inputData)
+            {
+                dynamic input = inputData;
+                if (input.Address is ulong address)
+                {
+                    return address;
+                }
+                return base.Transform(engineIntrinsics, inputData);
+            }
+        }
+
         public class SearchResult
         {
             public ulong Address { get; set; }
         }
 
         [Parameter(Mandatory = true, Position = 0, ValueFromPipeline = true)]
-        [AddressTransformation] //Not necessarily an address, but it is often enough that the semantics are useful
+        [AggressiveAddressTransformation] //Not necessarily an address, but it is often enough that the semantics are useful
         public ulong SearchValue { get; set; }
 
         [Parameter(Mandatory = false, Position = 1)]

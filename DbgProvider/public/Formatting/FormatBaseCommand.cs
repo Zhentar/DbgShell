@@ -189,7 +189,7 @@ namespace MS.Dbg.Formatting.Commands
                     if( m_pipeIndex > 0 )
                         WriteObject( String.Empty ); // this seems ugly...
 
-                    _WriteGroupByGroupHeader( newResult, true );
+                    _WriteGroupByGroupHeader( newResult, isDefaultGroupBy );
                 }
             }
         } // end ProcessRecord()
