@@ -15,6 +15,7 @@ using System.Threading.Tasks;
 using Microsoft.Diagnostics.Runtime;
 using Microsoft.Diagnostics.Runtime.Interop;
 using DbgEngWrapper;
+using Dia2Lib;
 using MS.Dbg.Commands;
 using MS.Dbg.Formatting;
 
@@ -3416,6 +3417,12 @@ namespace MS.Dbg
                 }
             } );
         } // end FindSymbol_Enum()
+
+
+        public IDiaSession GetDiaSession(ulong moduleBase)
+        {
+            return DbgHelp.GetDiaSession(DebuggerInterface, moduleBase);
+        }
 
 
         public IEnumerable< DbgSymbol > FindSymbol_Search( string pattern )

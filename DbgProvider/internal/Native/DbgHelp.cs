@@ -9,6 +9,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using DbgEngWrapper;
+using Dia2Lib;
 using Microsoft.Diagnostics.Runtime.Interop;
 
 namespace MS.Dbg
@@ -228,6 +229,12 @@ namespace MS.Dbg
                                                native_SYM_ENUMERATESYMBOLS_CALLBACK callback,
                                                IntPtr pUserContext,
                                                SymSearchOptions options );
+
+
+        [DefaultDllImportSearchPaths(DllImportSearchPath.LegacyBehavior)]
+        [DllImport("dbghelp.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool SymGetDiaSession(IntPtr hProcess, ulong address, out IDiaSession session);
     } // end partial class NativeMethods
 
 
@@ -932,6 +939,16 @@ namespace MS.Dbg
             size = tmpSize;
         }
 
+
+        public static IDiaSession GetDiaSession(WDebugClient debugClient, ulong modBase)
+        {
+            IntPtr hProcess = _GetHProcForDebugClient(debugClient);
+            if (NativeMethods.SymGetDiaSession(hProcess, modBase, out var session))
+            {
+                return session;
+            }
+            return null;
+        }
 
         private static unsafe void GetBaseTypeInfo_naked( WDebugClient debugClient,
                                                           ulong modBase,
