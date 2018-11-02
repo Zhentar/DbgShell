@@ -94,7 +94,9 @@ namespace MS.Dbg
                 {
                     try
                     {
-                        return new ColorString(ConsoleColor.Cyan, Debugger.GetModuleByAddress(address).Name);
+                        var module = Debugger.GetModuleByAddress(address);
+                        var session = Debugger.GetDiaSession(module.BaseAddress);
+                        return new ColorString(ConsoleColor.Cyan, module.Name);
                     }
                     catch (DbgEngException)
                     {
@@ -267,27 +269,30 @@ namespace MS.Dbg
 
         public static DbgSpecificSubpieceOfAVirtualAllocBlock GetSubpieceForHeap(ulong addr, ulong segmentBase, ulong heapBase, DbgEngDebugger debugger)
         {
-            var heap = GetHeap(heapBase, debugger);
-            ulong encoding = heap.Encoding.AgregateCode.ToUint64(null); //[sic]
-            var segmenttype = GetHeapSegmentType(debugger);
-            dynamic segment = debugger.GetValueForAddressAndType(segmentBase, segmenttype);
-
-            ulong entryAddr = segment.FirstEntry.DbgGetPointer();
-            while (debugger.TryReadMemAs_integer(entryAddr, 8, false, out var entryValue))
+            return debugger.ExecuteOnDbgEngThread(() =>
             {
-                _HEAP_ENTRY entry = new _HEAP_ENTRY { AgregateCode = entryValue ^ encoding };
-                ulong nextAddr = entryAddr + entry.Size * 8u;
-                if (addr < nextAddr)
+                var heap = GetHeap(heapBase, debugger);
+                ulong encoding = heap.Encoding.AgregateCode.ToUint64(null); //[sic]
+                var segmenttype = GetHeapSegmentType(debugger);
+                dynamic segment = debugger.GetValueForAddressAndType(segmentBase, segmenttype);
+
+                ulong entryAddr = segment.FirstEntry.DbgGetPointer();
+                while (debugger.TryReadMemAs_integer(entryAddr, 8, false, out var entryValue))
                 {
-                    bool free = (entry.Flags & 0x1) == 0;
-                    var actualSize = entry.Size * 8u - Math.Max(8u, entry.UnusedBytes); //I don't understand why unused is less than 8 sometimes
-                    return new DbgSpecificSubpieceOfAVirtualAllocBlock(entryAddr + 8, free, actualSize);
+                    _HEAP_ENTRY entry = new _HEAP_ENTRY {AgregateCode = entryValue ^ encoding};
+                    ulong nextAddr = entryAddr + entry.Size * 8u;
+                    if (addr < nextAddr)
+                    {
+                        bool free = (entry.Flags & 0x1) == 0;
+                        var actualSize = entry.Size * 8u - Math.Max(8u, entry.UnusedBytes); //I don't understand why unused is less than 8 sometimes
+                        return new DbgSpecificSubpieceOfAVirtualAllocBlock(entryAddr + 8, free, actualSize);
+                    }
+
+                    entryAddr = nextAddr;
                 }
 
-                entryAddr = nextAddr;
-            }
-
-            throw new InvalidOperationException("Address not within heap segment or heap segment corrupt");
+                throw new InvalidOperationException("Address not within heap segment or heap segment corrupt");
+            });
         }
 
         public DbgSpecificSubpieceOfAVirtualAllocBlock(ulong addr, bool free, ulong size) : base(addr)
@@ -320,6 +325,28 @@ namespace MS.Dbg
             }
 
             return cs;
+        }
+
+        public override bool Equals(object obj)
+        {
+            return obj is DbgSpecificSubpieceOfAVirtualAllocBlock other && Equals(other);
+        }
+
+        protected bool Equals(DbgSpecificSubpieceOfAVirtualAllocBlock other)
+        {
+            return base.Equals(other) && IsFree == other.IsFree && Address == other.Address && PieceSize == other.PieceSize;
+        }
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                int hashCode = base.GetHashCode();
+                hashCode = (hashCode * 397) ^ IsFree.GetHashCode();
+                hashCode = (hashCode * 397) ^ Address.GetHashCode();
+                hashCode = (hashCode * 397) ^ PieceSize.GetHashCode();
+                return hashCode;
+            }
         }
     }
 
