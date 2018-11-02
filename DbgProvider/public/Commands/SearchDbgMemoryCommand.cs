@@ -121,25 +121,58 @@ namespace MS.Dbg.Commands
                             //TODO: skip leading portion of first page and trailing portion of last page as needed
                             if (searchType == SearchSize.DWord)
                             {
-                                var dwords = MemoryMarshal.Cast<byte, uint>(bytes);
-                                for (int i = 0; i < dwords.Length; i++)
-                                {
-                                    if ((dwords[i] & searchMask) == searchValue)
-                                    {
-                                        int byteIdx = i * sizeof(uint);
-                                        ulong address = page + (ulong) byteIdx;
-                                        var valueBytes = bytes.Slice(byteIdx, sizeof(uint)).ToArray();
-                                        var result = new DbgMemory(address, valueBytes, Debugger);
-                                        result.DefaultDisplayFormat = DbgMemoryDisplayFormat.DWordsWithAscii;
-                                        yield(result);
-                                    }
-                                }
+                                SearchPage<uint, UintIntegralTypeHelper>(yield, bytes, searchMask, searchValue, page);
+                            }
+                            else
+                            {
+                                SearchPage<ulong, UlongIntegralTypeHelper>(yield, bytes, searchMask, searchValue, page);
                             }
                         }
                     }
                 }
             }
         }
-        
+
+        private unsafe void SearchPage<T, THelper>(Action<DbgMemory> yield, Span<byte> bytes, ulong searchMask, ulong searchValue, ulong page) where T : unmanaged where THelper : struct, IIntegralTypeHelper<T>
+        {
+            THelper helper = default;
+            T value = helper.ConvertUlong(searchValue);
+            T mask = helper.ConvertUlong(searchMask);
+            var dwords = MemoryMarshal.Cast<byte, T>(bytes);
+            for (int i = 0; i < dwords.Length; i++)
+            {
+                if (helper.AreEqual(helper.BitwiseAnd(dwords[i], mask), value))
+                {
+                    int byteIdx = i * sizeof(T);
+                    ulong address = page + (ulong) byteIdx;
+                    var valueBytes = bytes.Slice(byteIdx, sizeof(T)).ToArray();
+                    var result = new DbgMemory(address, valueBytes, Debugger);
+                    result.DefaultDisplayFormat = DbgMemoryDisplayFormat.DWordsWithAscii;
+                    yield(result);
+                }
+            }
+        }
+    }
+
+    internal struct UlongIntegralTypeHelper : IIntegralTypeHelper<ulong>
+    {
+        public ulong BitwiseAnd(ulong lhs, ulong rhs) => lhs & rhs;
+        public ulong ConvertUlong(ulong value) => value;
+        public bool AreEqual(ulong lhs, ulong rhs) => lhs == rhs;
+    }
+
+    internal struct UintIntegralTypeHelper : IIntegralTypeHelper<uint>
+    {
+        public uint BitwiseAnd(uint lhs, uint rhs) => lhs & rhs;
+        public uint ConvertUlong(ulong value) => (uint) value;
+        public bool AreEqual(uint lhs, uint rhs) => lhs == rhs;
+
+    }
+
+    internal interface IIntegralTypeHelper<T> where T: unmanaged
+    {
+        T BitwiseAnd(T lhs, T rhs);
+        T ConvertUlong(ulong value);
+        bool AreEqual(T lhs, T rhs);
     }
 }
