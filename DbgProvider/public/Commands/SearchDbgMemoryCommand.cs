@@ -2,14 +2,17 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Management.Automation;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CSharp.RuntimeBinder;
+using Microsoft.Diagnostics.Runtime.Interop;
 
 namespace MS.Dbg.Commands
 {
     [Cmdlet(VerbsCommon.Search, "DbgMemory")]
-    [OutputType(typeof(SearchDbgMemoryCommand.SearchResult))]
+    [OutputType(typeof(DbgMemory))]
     public class SearchDbgMemoryCommand : DbgBaseCommand
     {
         //Problem: want to pipeline things like Get-DbgSymbol in. But Powershell can't figure out which ulong to match to which parameter.
@@ -39,15 +42,23 @@ namespace MS.Dbg.Commands
             public ulong Address { get; set; }
         }
 
+        public enum SearchSize
+        {
+            Default,
+            DWord,
+            QWord
+        }
+
         [Parameter(Mandatory = true, Position = 0, ValueFromPipeline = true)]
         [AggressiveAddressTransformation] //Not necessarily an address, but it is often enough that the semantics are useful
         public ulong SearchValue { get; set; }
 
-        [Parameter(Mandatory = false, Position = 1)]
-        public uint SearchValueLengthInBytes { get; set; }
-
         [Parameter(Mandatory = false)]
-        public uint SearchResultAlignment { get; set; }
+        [AddressTransformation]
+        public ulong SearchMask { get; set; }
+
+        [Parameter(Mandatory = false, Position = 1)]
+        public SearchSize SearchType { get; set; }
 
         [Parameter(Mandatory = false)]
         [AddressTransformation]
@@ -64,23 +75,71 @@ namespace MS.Dbg.Commands
         {
             base.ProcessRecord();
 
+
+            foreach (var result in Debugger.StreamFromDbgEngThread<DbgMemory>(CancellationToken.None, DoSearch))
+            {
+                WriteObject(result);
+            }
+            
+        }
+
+        private void DoSearch(CancellationToken ct, Action<DbgMemory> yield)
+        {
             var endAddress = (FromAddress + SearchRangeInBytes) ?? ulong.MaxValue;
 
-            var targetPointerSize = Debugger.TargetIs32Bit ? 4u : 8u;
+            var targetPointerType = Debugger.TargetIs32Bit ? SearchSize.DWord : SearchSize.QWord;
 
-            var searchLength = SearchValueLengthInBytes == 0 ? targetPointerSize : SearchValueLengthInBytes;
-            var searchAlignment = SearchResultAlignment == 0 ? Math.Min(targetPointerSize, searchLength) : SearchResultAlignment;
-            var searchForBytes = BitConverter.GetBytes(SearchValue).Take((int)searchLength).ToArray();
+            
+            
 
-            var curAddress = FromAddress;
-            while (Debugger.SearchMemory(curAddress, endAddress, searchForBytes, WritableOnly, out var resultAddr))
+            var searchType = SearchType == SearchSize.Default ? targetPointerType : SearchType;
+
+            var searchMask = SearchMask;
+            if(searchMask == 0) { searchMask = ulong.MaxValue; }
+            var searchValue = SearchValue & searchMask;
+
+            var startAddress = FromAddress & 0xFFFF_FFFF_FFFF_FFFC;
+            if (searchType == SearchSize.QWord)
             {
-                curAddress = resultAddr + searchLength;
-                if (resultAddr % searchAlignment == FromAddress % searchAlignment)
+                startAddress = startAddress & 0xFFFF_FFFF_FFFF_FFF8;
+            }
+
+            var startPage = startAddress & 0xFFFF_FFFF_FFFF_F000;
+            var curPage = startPage;
+
+            Span<byte> bytes = stackalloc byte[4096];
+            while (curPage < endAddress && Debugger.TryQueryVirtual(curPage, out var info) == 0)
+            {
+                var regionEnd = info.BaseAddress + info.RegionSize;
+                curPage = regionEnd;
+                if ((info.State & MEM.COMMIT) != 0) //TODO: other filtering
                 {
-                    WriteObject(new SearchResult {Address = resultAddr});
+                    for (var page = info.BaseAddress; page < Math.Min(endAddress, regionEnd); page += 4096)
+                    {
+                        if (Debugger.TryReadVirtualDirect(page, bytes))
+                        {
+                            //TODO: skip leading portion of first page and trailing portion of last page as needed
+                            if (searchType == SearchSize.DWord)
+                            {
+                                var dwords = MemoryMarshal.Cast<byte, uint>(bytes);
+                                for (int i = 0; i < dwords.Length; i++)
+                                {
+                                    if ((dwords[i] & searchMask) == searchValue)
+                                    {
+                                        int byteIdx = i * sizeof(uint);
+                                        ulong address = page + (ulong) byteIdx;
+                                        var valueBytes = bytes.Slice(byteIdx, sizeof(uint)).ToArray();
+                                        var result = new DbgMemory(address, valueBytes, Debugger);
+                                        result.DefaultDisplayFormat = DbgMemoryDisplayFormat.DWordsWithAscii;
+                                        yield(result);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+        
     }
 }

@@ -2109,6 +2109,15 @@ namespace MS.Dbg
         } // end ReadMem()
 
 
+        internal unsafe bool TryReadVirtualDirect(ulong address, Span<byte> buffer)
+        {
+            fixed (byte* pBytes = buffer)
+            {
+                int hr = m_debugDataSpaces.ReadVirtualDirect(address, (uint)buffer.Length, pBytes, out var bytesRead);
+                return _TryCheckMemoryReadHr(hr) && bytesRead == buffer.Length;
+            }
+        }
+
         private void _HandleWriteMemError( int hr,
                                            ulong address,
                                            uint cbRequested,
@@ -3421,7 +3430,7 @@ namespace MS.Dbg
 
         public IDiaSession GetDiaSession(ulong moduleBase)
         {
-            return DbgHelp.GetDiaSession(DebuggerInterface, moduleBase);
+            return ExecuteOnDbgEngThread( () => DbgHelp.GetDiaSession(DebuggerInterface, moduleBase));
         }
 
 

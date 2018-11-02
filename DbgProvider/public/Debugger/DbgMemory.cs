@@ -64,7 +64,14 @@ namespace MS.Dbg
         }
 
         public DbgMemory( byte[] bytes, DbgEngDebugger debugger )
-            : this( 0, bytes, false, debugger )
+            : this( 0, bytes, debugger )
+        {
+        }
+
+        public DbgMemory(ulong address,
+            byte[] bytes,
+            DbgEngDebugger debugger)
+            : this(address, bytes, debugger.TargetIs32Bit, debugger)
         {
         }
 
