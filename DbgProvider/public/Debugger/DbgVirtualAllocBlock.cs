@@ -159,45 +159,33 @@ namespace MS.Dbg
             }
         }
 
-        internal static DbgUdtTypeInfo GetHeapSegmentType(DbgEngDebugger debugger)
-        {
-            var segmentsi = DbgHelp.EnumTypesByName(debugger.DebuggerInterface,
-                0,
-                "ntdll!_HEAP_SEGMENT",
-                System.Threading.CancellationToken.None).FirstOrDefault();
-            if (null == segmentsi)
-            {
-                throw new DbgProviderException("Can't find type ntdll!_HEAP_SEGMENT. No symbols?",
-                    "NoHeapType",
-                    System.Management.Automation.ErrorCategory.ObjectNotFound);
-            }
+        internal static DbgUdtTypeInfo GetHeapSegmentType(DbgEngDebugger debugger) => GetTypeNamed(debugger, "ntdll!_HEAP_SEGMENT");
 
-            var segmenttype = (DbgUdtTypeInfo) DbgTypeInfo.GetNamedTypeInfo(debugger,
-                segmentsi.ModBase,
-                segmentsi.TypeIndex,
-                segmentsi.Tag,
-                debugger.GetCurrentTarget());
-            return segmenttype;
-        }
-
-        internal static dynamic GetHeap(ulong heapBase, DbgEngDebugger debugger)
+        internal static DbgUdtTypeInfo GetTypeNamed(DbgEngDebugger debugger, string name)
         {
+
             var si = DbgHelp.EnumTypesByName(debugger.DebuggerInterface,
                 0,
-                "ntdll!_HEAP",
+                name,
                 System.Threading.CancellationToken.None).FirstOrDefault();
-
             if (null == si)
             {
-                throw new DbgProviderException("Can't find type ntdll!_HEAP. No symbols?",
+                throw new DbgProviderException($"Can't find type {name}. No symbols?",
                     "NoHeapType",
                     System.Management.Automation.ErrorCategory.ObjectNotFound);
             }
-            var type = DbgTypeInfo.GetNamedTypeInfo(debugger,
+
+            var type = (DbgUdtTypeInfo)DbgTypeInfo.GetNamedTypeInfo(debugger,
                 si.ModBase,
                 si.TypeIndex,
                 si.Tag,
                 debugger.GetCurrentTarget());
+            return type;
+        }
+
+        internal static dynamic GetHeap(ulong heapBase, DbgEngDebugger debugger)
+        {
+            var type = GetTypeNamed(debugger, "ntdll!_HEAP");
             dynamic heap = new DbgSimpleSymbol(debugger,
                 "Heap",
                 type,
@@ -275,10 +263,25 @@ namespace MS.Dbg
                 ulong encoding = heap.Encoding.AgregateCode.ToUint64(null); //[sic]
                 var segmenttype = GetHeapSegmentType(debugger);
                 dynamic segment = debugger.GetValueForAddressAndType(segmentBase, segmenttype);
+                DbgSymbol ucrListHeadSymbol = segment.UCRSegmentList.DbgGetOperativeSymbol();
+                var ucrListHead = ucrListHeadSymbol.Address;
+                var ucrType = GetTypeNamed(debugger, "ntdll!_HEAP_UCR_DESCRIPTOR");
 
-                ulong entryAddr = segment.FirstEntry.DbgGetPointer();
-                while (debugger.TryReadMemAs_integer(entryAddr, 8, false, out var entryValue))
+                ulong heapHeaderOffset = heap.Encoding.DbgGetOperativeSymbol().Type.Members["AgregateCode"].Offset;
+                var ucrEntries = new HashSet<ulong>(debugger.EnumerateLIST_ENTRY_raw(ucrListHead, (int)ucrListHeadSymbol.Type.Size));
+
+
+                ulong entryAddr = segment.FirstEntry.DbgGetPointer() + heapHeaderOffset;
+                while (debugger.TryReadMemAs_integer(entryAddr , 8, false, out var entryValue))
                 {
+                    if (ucrEntries.Contains(entryAddr + 8))
+                    {
+                        dynamic ucrDescriptor = debugger.GetValueForAddressAndType(entryAddr + 8, ucrType);
+                        var ucrSize = ucrDescriptor.Size;
+                        if(ucrSize == 0) { break; }
+                        entryAddr = ucrDescriptor.Address + ucrSize + heapHeaderOffset;
+                        continue;
+                    }
                     _HEAP_ENTRY entry = new _HEAP_ENTRY {AgregateCode = entryValue ^ encoding};
                     ulong nextAddr = entryAddr + entry.Size * 8u;
                     if (addr < nextAddr)
@@ -288,7 +291,7 @@ namespace MS.Dbg
                         return new DbgSpecificSubpieceOfAVirtualAllocBlock(entryAddr + 8, free, actualSize);
                     }
 
-                    entryAddr = nextAddr;
+                    entryAddr = nextAddr + heapHeaderOffset;
                 }
 
                 throw new InvalidOperationException("Address not within heap segment or heap segment corrupt");
