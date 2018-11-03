@@ -95,7 +95,6 @@ namespace MS.Dbg
                     try
                     {
                         var module = Debugger.GetModuleByAddress(address);
-                        var session = Debugger.GetDiaSession(module.BaseAddress);
                         return new ColorString(ConsoleColor.Cyan, module.Name);
                     }
                     catch (DbgEngException)
