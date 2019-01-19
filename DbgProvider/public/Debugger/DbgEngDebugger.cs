@@ -53,7 +53,7 @@ namespace MS.Dbg
             return _GlobalDebugger;
         }
 
-        public void LoadCrashDump( string dumpFileName,
+        internal void LoadCrashDump( string dumpFileName,
                                    string targetFriendlyName )
         {
             DbgEngThread.Singleton.Execute( () =>
@@ -61,6 +61,27 @@ namespace MS.Dbg
                     CheckHr( m_debugClient.OpenDumpFileWide( dumpFileName, 0 ) );
                     SetNextTargetName( targetFriendlyName );
                 } );
+        }
+
+        public static DbgEngDebugger OpenDumpFile( string dumpFileName, string targetFriendlyName = "" )
+        {
+            return OpenDumpFileAsync( dumpFileName, targetFriendlyName ).Result;
+        }
+
+        public static async Task< DbgEngDebugger > OpenDumpFileAsync( string dumpFileName, string targetFriendlyName = "" )
+        {
+            return await DbgEngThread.Singleton.ExecuteAsync( () =>
+             {
+                 if( String.IsNullOrEmpty( targetFriendlyName ) )
+                 {
+                     targetFriendlyName = dumpFileName;
+                 }
+                 var debugger = _GlobalDebugger;
+                 debugger.LoadCrashDump( dumpFileName, targetFriendlyName );
+                 debugger.CheckHr( debugger.m_debugControl.WaitForEvent( DEBUG_WAIT.DEFAULT, UInt32.MaxValue ) );
+                 debugger.GetCurrentTargetInternal();
+                 return debugger;
+             } );
         }
 
         public void AttachToProcess( int pid, IPipelineCallback psPipe )
@@ -116,17 +137,17 @@ namespace MS.Dbg
         } // end AttachToProcess()
 
 
-        public void CreateProcessAndAttach( string commandLine, string targetFriendlyName )
+        public static DbgEngDebugger CreateProcessAndAttach( string commandLine, string targetFriendlyName )
         {
-            CreateProcessAndAttach( commandLine, targetFriendlyName, false, false );
+            return CreateProcessAndAttachAsync( commandLine, targetFriendlyName, false, false ).Result;
         }
 
-        public void CreateProcessAndAttach( string commandLine,
+        public async static Task< DbgEngDebugger > CreateProcessAndAttachAsync( string commandLine,
                                             string targetFriendlyName,
                                             bool skipInitialBreakpoint,
                                             bool skipFinalBreakpoint )
         {
-            DbgEngThread.Singleton.Execute( () =>
+            return await DbgEngThread.Singleton.ExecuteAsync( () =>
                 {
                     var debugger = _GlobalDebugger;
 
@@ -142,6 +163,7 @@ namespace MS.Dbg
                     debugger.SkipInitialBreakpoint = skipInitialBreakpoint;
                     debugger.SkipFinalBreakpoint = skipFinalBreakpoint;
                     debugger.SetNextTargetName( targetFriendlyName );
+                    return debugger;
                 } );
         } // end CreateProcessAndAttach()
 
@@ -1549,8 +1571,8 @@ namespace MS.Dbg
                     m_outputCallbacks.Prefix = currentPrefix;
                     m_outputCallbacks.ConsumeLine = currentCl;
                 } );
-            m_outputCallbacks.Prefix = String.Empty;
             m_outputCallbacks.Flush();
+            m_outputCallbacks.Prefix = String.Empty;
             m_outputCallbacks.ConsumeLine = consumeLine;
             return disposer;
         } // end HandleDbgEngOutput()
@@ -2118,6 +2140,49 @@ namespace MS.Dbg
             }
         }
 
+        /// <summary>
+        ///    Reads the specified number of bytes from the specified address in the
+        ///    target's memory space, filling the specified pre-allocated buffer. This
+        ///    method requires you to read a valid number of bytes, rather than letting
+        ///    you specify a "failIfReadSmaller" bool and filling the remainder of the
+        ///    buffer with zeroes or a pattern or something.
+        /// </summary>
+        public unsafe void ReadMem< T >( ulong address, Memory< T > fillMe ) where T : unmanaged
+        {
+            ExecuteOnDbgEngThread( () =>
+                {
+                    uint lengthDesired = (uint) (fillMe.Length * sizeof( T ));
+
+                    using( var memHandle = fillMe.Pin() )
+                    {
+                        _CheckMemoryReadHr( address,
+                                            m_debugDataSpaces.ReadVirtualDirect( address,
+                                                                                 lengthDesired,
+                                                                                 (byte*) memHandle.Pointer,
+                                                                                 out uint bytesRead ) );
+
+
+                        if( lengthDesired != bytesRead )
+                        {
+                            string addrString = DbgProvider.FormatAddress( address, TargetIs32Bit, true );
+                            LogManager.Trace( "Error: under-read: Wanted {0} bytes from address {1}, but only got {2}.",
+                                              lengthDesired,
+                                              addrString,
+                                              bytesRead );
+
+                            throw new DbgMemoryAccessException( address,
+                                                                Util.Sprintf( "Error reading virtual memory at {0}: could not read full 0x{1:x} bytes (read 0x{2:x}).",
+                                                                              addrString,
+                                                                              lengthDesired,
+                                                                              bytesRead ),
+                                                                "UnderRead",
+                                                                System.Management.Automation.ErrorCategory.ReadError );
+                        }
+                    }
+                } );
+        } // end ReadMem< T >()
+
+
         private void _HandleWriteMemError( int hr,
                                            ulong address,
                                            uint cbRequested,
@@ -2144,16 +2209,6 @@ namespace MS.Dbg
             }
         } // end _HandleWriteMemError()
 
-        public void WriteMem( ulong address, byte[] changes )
-        {
-            ExecuteOnDbgEngThread( () =>
-                {
-                    uint written = 0;
-                    int hr = m_debugDataSpaces.WriteVirtual( address, changes, out written );
-                    _HandleWriteMemError( hr, address, (uint) changes.Length, written );
-                } );
-        } // end WriteMem()
-
         public unsafe void WriteMem( ulong address, byte* changes, uint cbChanges )
         {
             ExecuteOnDbgEngThread( () =>
@@ -2164,56 +2219,22 @@ namespace MS.Dbg
                 } );
         } // end WriteMem()
 
-        public unsafe void WriteMem( ulong address, uint[] changes )
+        public unsafe void WriteMem< T >( ulong address, ReadOnlyMemory< T > changes ) where T : unmanaged
         {
             ExecuteOnDbgEngThread( () =>
                 {
-                    fixed( uint* p = changes )
+                    using( var memHandle = changes.Pin() )
                     {
                         WriteMem( address,
-                                  (byte*) p,
-                                  (uint) (changes.Length * sizeof( uint )) );
+                                  (byte*) memHandle.Pointer,
+                                  (uint) (changes.Length * sizeof( T )) );
                     }
                 } );
         } // end WriteMem()
 
-        public unsafe void WriteMem( ulong address, int[] changes )
+        public unsafe void WriteMem< T >( ulong address, T[] changes ) where T : unmanaged
         {
-            ExecuteOnDbgEngThread( () =>
-                {
-                    fixed( int* p = changes )
-                    {
-                        WriteMem( address,
-                                  (byte*) p,
-                                  (uint) (changes.Length * sizeof( int )) );
-                    }
-                } );
-        } // end WriteMem()
-
-        public unsafe void WriteMem( ulong address, ulong[] changes )
-        {
-            ExecuteOnDbgEngThread( () =>
-                {
-                    fixed( ulong* p = changes )
-                    {
-                        WriteMem( address,
-                                  (byte*) p,
-                                  (uint) (changes.Length * sizeof( ulong )) );
-                    }
-                } );
-        } // end WriteMem()
-
-        public unsafe void WriteMem( ulong address, long[] changes )
-        {
-            ExecuteOnDbgEngThread( () =>
-                {
-                    fixed( long* p = changes )
-                    {
-                        WriteMem( address,
-                                  (byte*) p,
-                                  (uint) (changes.Length * sizeof( long )) );
-                    }
-                } );
+            WriteMem( address, new ReadOnlyMemory< T >( changes ) );
         } // end WriteMem()
 
 
@@ -2437,20 +2458,26 @@ namespace MS.Dbg
             return new Guid( raw );
         } // end ReadMemAs_Guid()
 
-        public T[] ReadMemAs_TArray< T >( ulong address, uint count )
+        public T[] ReadMemAs_TArray< T >( ulong address, uint count ) where T: unmanaged
         {
-            byte[] raw = ReadMem( address, count * (uint) Marshal.SizeOf( typeof( T ) ), true );
             T[] dest = new T[ count ];
-            Buffer.BlockCopy( raw, 0, dest, 0, raw.Length );
+
+            ReadMem( address, (Memory< T >) dest );
+
             return dest;
         } // end ReadMemAs_TArray< T >()
 
         // This way looks weird, but it's much more convenient for PowerShell.
+        // If this ever gets implemented in PowerShell, then we could get rid of this
+        // method: https://github.com/PowerShell/PowerShell/issues/5146
         public Array ReadMemAs_TArray( ulong address, uint count, Type T )
         {
             if( null == T )
                 throw new ArgumentNullException( "T" );
 
+            // It would be nice change this to read directly into the pre-allocated
+            // buffer, like the generic overload of this method, but I don't have a way to
+            // pin or get the address of the first element of an "Array" instance.
             byte[] raw = ReadMem( address, count * (uint) Marshal.SizeOf( T ), true );
             Array dest = Array.CreateInstance( T, (int) count );
             Buffer.BlockCopy( raw, 0, dest, 0, raw.Length );
@@ -2824,7 +2851,7 @@ namespace MS.Dbg
                 // This isn't just an optimization--we need to skip the code below because
                 // the "fixed" keyword, when used with a 0-length array, will yield a null
                 // pointer, and then the decoder.Convert API will complain.
-                // 
+                //
                 // (I did file a bug for Decoder.Convert to accept a null char buffer when
                 // the size of it is zero anyway, but it was Wont' Fix-ed. I didn't bother
                 // filing a bug for the "fixed" keyword; I doubt they could change that.)
@@ -4477,53 +4504,56 @@ namespace MS.Dbg
 
         private Dictionary< DbgEngContext, DbgTarget > m_targets = new Dictionary< DbgEngContext, DbgTarget >();
 
-        public DbgTarget GetCurrentTarget()
+        /// <summary>
+        ///    Returns a DbgTarget object representing the current target, or null if
+        ///    there is none.
+        /// </summary>
+        public DbgTarget GetCurrentTarget() => ExecuteOnDbgEngThread( GetCurrentTargetInternal );
+
+        private DbgTarget GetCurrentTargetInternal()
         {
-            return ExecuteOnDbgEngThread( () =>
+            DbgEngContext ctx;
+            int hr = m_debugSystemObjects.GetCurrentSystemId( out uint sysId );
+
+            if( E_UNEXPECTED == hr )
+            {
+                return null; // No current target.
+            }
+
+            CheckHr( hr );
+
+            bool kernelMode = IsKernelMode;
+
+            if( kernelMode )
+            {
+                ctx = new DbgEngContext( sysId, true );
+            }
+            else
+            {
+                // User-mode
+                CheckHr( m_debugSystemObjects.GetCurrentProcessId( out uint procId ) );
+                ctx = new DbgEngContext( sysId, procId );
+            }
+
+            if( !m_targets.TryGetValue( ctx, out DbgTarget t ) )
+            {
+                if( kernelMode )
                 {
-                    uint sysId;
-                    DbgEngContext ctx;
-                    DbgTarget t;
-                    CheckHr( m_debugSystemObjects.GetCurrentSystemId( out sysId ) );
+                    t = new DbgKModeTarget( this, ctx, _GetKmTargetName( sysId ) );
+                }
+                else
+                {
+                    // User-mode
+                    CheckHr( m_debugSystemObjects.GetCurrentProcessSystemId( out uint sysProcId ) );
+                    t = new DbgUModeProcess( this, ctx, sysProcId, _GetUmTargetName( sysProcId ) );
+                }
 
-                    bool kernelMode = IsKernelMode;
+                t.ClrMdDisabled = m_clrMdDisabled;
+                m_targets.Add( ctx, t );
+            }
 
-                    if( kernelMode )
-                    {
-                        ctx = new DbgEngContext( sysId, true );
-                    }
-                    else
-                    {
-                        // User-mode
-
-                        uint procId;
-                        CheckHr( m_debugSystemObjects.GetCurrentProcessId( out procId ) );
-                        ctx = new DbgEngContext( sysId, procId );
-                    }
-
-                    if( !m_targets.TryGetValue( ctx, out t ) )
-                    {
-                        if( kernelMode )
-                        {
-                            t = new DbgKModeTarget( this, ctx, _GetKmTargetName( sysId ) );
-                        }
-                        else
-                        {
-                            // User-mode
-                            uint sysProcId;
-                            CheckHr( m_debugSystemObjects.GetCurrentProcessSystemId( out sysProcId ) );
-                            t = new DbgUModeProcess( this,
-                                                     ctx,
-                                                     sysProcId,
-                                                     _GetUmTargetName( sysProcId ) );
-                        }
-                        t.ClrMdDisabled = m_clrMdDisabled;
-                        m_targets.Add( ctx, t );
-                    }
-
-                    return t;
-                } );
-        } // end GetCurrentTarget()
+            return t;
+        } // end GetCurrentTargetInternal()
 
 
         public DbgUModeProcess GetCurrentUModeProcess()
@@ -6110,89 +6140,16 @@ namespace MS.Dbg
         }
 
 
-        public IEnumerable< PSObject > EnumerateLIST_ENTRY( dynamic head,
-                                                            DbgUdtTypeInfo entryType,
-                                                            string listEntryMemberPath )
-        {
-            head = head;
-
-            if( null == head )
-                throw new ArgumentNullException( "head" );
-
-            if( null == entryType )
-                throw new ArgumentNullException( "entryType" );
-
-            uint listEntryOffset;
-            if( String.IsNullOrEmpty( listEntryMemberPath ) )
-            {
-                // We'll try to deduce it automatically.
-                var listEntryMembers = entryType.Members.Where( ( x ) => 0 == Util.Strcmp_OI( x.DataType.Name, "_LIST_ENTRY" ) ).ToArray();
-                if( listEntryMembers.Length > 1 )
-                {
-                    // TODO: write warning
-                }
-                else if( 0 == listEntryMembers.Length )
-                {
-                    throw new ArgumentException( Util.Sprintf( "Could not find a _LIST_ENTRY member in type '{0}'.",
-                                                               entryType.FullyQualifiedName ) );
-                }
-                listEntryOffset = listEntryMembers[ 0 ].Offset;
-            }
-            else
-            {
-                const string dotFlink = ".Flink";
-                if( listEntryMemberPath.EndsWith( dotFlink, StringComparison.OrdinalIgnoreCase ) )
-                {
-                    // TODO: write warning
-                    // Trim off ".Flink".
-                    listEntryMemberPath.Substring( 0, listEntryMemberPath.Length - dotFlink.Length );
-                }
-                listEntryOffset = entryType.FindMemberOffset( listEntryMemberPath );
-            }
-
-            if( head is DbgPointerValue )
-            {
-                // You're allowed to pass a LIST_ENTRY, a LIST_ENTRY*, a LIST_ENTRY**, ...
-                head = head.DbgFollowPointers();
-            }
-
-            DbgSymbol sym = head.DbgGetOperativeSymbol();
-            string itemNamePrefix = sym.Name + "_";
-
-            ulong headAddr = sym.Address;
-
-            int idx = 0;
-            foreach (var entry in this.EnumerateLIST_ENTRY_raw(headAddr, 0))
-            {
-                yield return GetValueForAddressAndType(entry + listEntryOffset, entryType, itemNamePrefix + idx.ToString(), false, false);
-                idx++;
-            }
-        } // end EnumerateLIST_ENTRY()
-
-
-        public IEnumerable< ulong > EnumerateLIST_ENTRY_raw( string headSymName,
-                                                             string entryTypeName,
-                                                             string listEntryMemberPath ) // optional
-        {
-            return EnumerateLIST_ENTRY_raw( headSymName,
-                                            entryTypeName,
-                                            listEntryMemberPath,
-                                            CancellationToken.None );
-        }
-
-
-        public IEnumerable< ulong > EnumerateLIST_ENTRY_raw( string headSymName,
-                                                             string entryTypeName,
-                                                             string listEntryMemberPath, // optional
-                                                             CancellationToken cancelToken )
+        public IEnumerable< DbgValue > EnumerateLIST_ENTRY( string headSymName,
+                                                            string entryTypeName,
+                                                            string listEntryMemberPath ) // optional
         {
             ulong headAddr = 0;
 
             try
             {
                 var headSym = FindSymbol_Search( headSymName,
-                                                 GlobalSymbolCategory.Data,
-                                                 cancelToken ).FirstOrDefault();
+                                                 GlobalSymbolCategory.Data ).FirstOrDefault();
 
                 headAddr = headSym.Address;
             }
@@ -6206,31 +6163,17 @@ namespace MS.Dbg
                                                 headSymName );
             }
 
-            return EnumerateLIST_ENTRY_raw( headAddr, entryTypeName, listEntryMemberPath, cancelToken );
+            return EnumerateLIST_ENTRY( headAddr, entryTypeName, listEntryMemberPath );
         }
 
-
-
-        public IEnumerable< ulong > EnumerateLIST_ENTRY_raw( ulong headAddr,
-                                                             string entryTypeName,
-                                                             string listEntryMemberPath ) // optional
-        {
-            return EnumerateLIST_ENTRY_raw( headAddr,
-                                            entryTypeName,
-                                            listEntryMemberPath,
-                                            CancellationToken.None );
-        }
-
-        public IEnumerable< ulong > EnumerateLIST_ENTRY_raw( ulong headAddr,
-                                                             string entryTypeName,
-                                                             string listEntryMemberPath, // optional
-                                                             CancellationToken cancelToken )
+        public IEnumerable< DbgValue > EnumerateLIST_ENTRY( ulong headAddr,
+                                                            string entryTypeName,
+                                                            string listEntryMemberPath ) // optional
         {
             DbgUdtTypeInfo entryType = null;
             try
             {
-                entryType = (DbgUdtTypeInfo) GetTypeInfoByName( entryTypeName,
-                                                                cancelToken ).FirstOrDefault();
+                entryType = (DbgUdtTypeInfo) GetTypeInfoByName( entryTypeName ).FirstOrDefault();
             }
             catch( DbgProviderException dpe )
             {
@@ -6242,25 +6185,127 @@ namespace MS.Dbg
                                                 entryTypeName );
             }
 
-            return EnumerateLIST_ENTRY_raw( headAddr, entryType, listEntryMemberPath, cancelToken );
+            return EnumerateLIST_ENTRY( headAddr, entryType, listEntryMemberPath );
+        }
+
+
+        public IEnumerable< DbgValue > EnumerateLIST_ENTRY( DbgValue head,
+                                                            DbgUdtTypeInfo entryType,
+                                                            string listEntryMemberPath )
+        {
+            if( null == head )
+                throw new ArgumentNullException( "head" );
+
+            if( head is DbgPointerValue )
+            {
+                // You're allowed to pass a LIST_ENTRY, a LIST_ENTRY*, a LIST_ENTRY**, ...
+                head = (DbgValue) (((DbgPointerValue) head).DbgFollowPointers()).BaseObject;
+            }
+
+            DbgSymbol headSym = head.DbgGetOperativeSymbol();
+            string itemNamePrefix = headSym.Name + "_";
+
+            ulong headAddr = headSym.Address;
+
+            return EnumerateLIST_ENTRY( headAddr,
+                                        entryType,
+                                        listEntryMemberPath,
+                                        itemNamePrefix );
+        }
+
+        public IEnumerable< DbgValue > EnumerateLIST_ENTRY( ulong headAddr,
+                                                            DbgUdtTypeInfo entryType,
+                                                            string listEntryMemberPath ) // optional
+        {
+            return EnumerateLIST_ENTRY( headAddr,
+                                        entryType,
+                                        listEntryMemberPath,
+                                        null ); // itemNamePrefix
+        }
+
+        public IEnumerable< DbgValue > EnumerateLIST_ENTRY( ulong headAddr,
+                                                            DbgUdtTypeInfo entryType,
+                                                            string listEntryMemberPath,  // optional
+                                                            string itemNamePrefix )      // optional
+        {
+            int idx = 0;
+
+            if( String.IsNullOrEmpty( itemNamePrefix ) )
+            {
+                itemNamePrefix = "listEntry_";
+            }
+
+            foreach( ulong entryAddr in EnumerateLIST_ENTRY_raw( headAddr,
+                                                                 entryType,
+                                                                 listEntryMemberPath ) )
+            {
+                var pso = Debugger.GetValueForAddressAndType( entryAddr,
+                                                              entryType,
+                                                              "listEntry_" + idx.ToString(),
+                                                              skipConversion: false,
+                                                              skipDerivedTypeDetection: false );
+
+                yield return (DbgValue) pso.BaseObject;
+
+                idx++;
+            }
+        }
+
+
+        public IEnumerable< ulong > EnumerateLIST_ENTRY_raw( string headSymName,
+                                                             string entryTypeName,
+                                                             string listEntryMemberPath ) // optional
+        {
+            ulong headAddr = 0;
+
+            try
+            {
+                var headSym = FindSymbol_Search( headSymName,
+                                                 GlobalSymbolCategory.Data ).FirstOrDefault();
+
+                headAddr = headSym.Address;
+            }
+            catch( DbgProviderException dpe )
+            {
+                throw new DbgProviderException( Util.Sprintf( "Could not find head symbol \"{0}\". Are you missing the PDB?",
+                                                              headSymName ),
+                                                "HeadSymNotFound_maybeNoPdb",
+                                                System.Management.Automation.ErrorCategory.ObjectNotFound,
+                                                dpe,
+                                                headSymName );
+            }
+
+            return EnumerateLIST_ENTRY_raw( headAddr, entryTypeName, listEntryMemberPath );
+        }
+
+
+
+        public IEnumerable< ulong > EnumerateLIST_ENTRY_raw( ulong headAddr,
+                                                             string entryTypeName,
+                                                             string listEntryMemberPath ) // optional
+        {
+            DbgUdtTypeInfo entryType = null;
+            try
+            {
+                entryType = (DbgUdtTypeInfo) GetTypeInfoByName( entryTypeName ).FirstOrDefault();
+            }
+            catch( DbgProviderException dpe )
+            {
+                throw new DbgProviderException( Util.Sprintf( "Could not find type information for \"{0}\". Are you missing the PDB?",
+                                                              entryTypeName ),
+                                                "NoTypeInfo_maybeMissingPdb",
+                                                System.Management.Automation.ErrorCategory.ObjectNotFound,
+                                                dpe,
+                                                entryTypeName );
+            }
+
+            return EnumerateLIST_ENTRY_raw( headAddr, entryType, listEntryMemberPath );
         }
 
 
         public IEnumerable< ulong > EnumerateLIST_ENTRY_raw( ulong headAddr,
                                                              DbgUdtTypeInfo entryType,
                                                              string listEntryMemberPath ) // optional
-        {
-            return EnumerateLIST_ENTRY_raw( headAddr,
-                                            entryType,
-                                            listEntryMemberPath,
-                                            CancellationToken.None );
-        }
-
-
-        public IEnumerable< ulong > EnumerateLIST_ENTRY_raw( ulong headAddr,
-                                                             DbgUdtTypeInfo entryType,
-                                                             string listEntryMemberPath, // optional
-                                                             CancellationToken cancelToken )
         {
             if( null == entryType )
                 throw new ArgumentNullException( "entryType" );
@@ -6293,29 +6338,22 @@ namespace MS.Dbg
                 listEntryOffset = (int) entryType.FindMemberOffset( listEntryMemberPath );
             }
 
-            return EnumerateLIST_ENTRY_raw( headAddr, listEntryOffset, cancelToken );
+            return EnumerateLIST_ENTRY_raw( headAddr, listEntryOffset );
         }
 
 
         public IEnumerable< ulong > EnumerateLIST_ENTRY_raw( ulong headAddr,
                                                              int listEntryOffset )
         {
-            return EnumerateLIST_ENTRY_raw( headAddr, listEntryOffset, CancellationToken.None );
-        }
-
-        public IEnumerable< ulong > EnumerateLIST_ENTRY_raw( ulong headAddr,
-                                                             int listEntryOffset,
-                                                             CancellationToken cancelToken )
-        {
-            return StreamFromDbgEngThread< ulong >( cancelToken, ( ct, emit ) =>
+            return StreamFromDbgEngThread< ulong >( CancellationToken.None, ( ct, emit ) =>
             {
                 try
                 {
-                    ulong curListEntry = ReadMemAs_pointer( headAddr ); // reading first .Flink
+                    ulong curListEntry = ReadMemAs_pointer( headAddr ); // reading first .Flink (or .Next, for singly-linked lists)
 
                     int idx = 0;
 
-                    while( curListEntry != headAddr )
+                    while( (curListEntry != headAddr) && (curListEntry != 0) )
                     {
                         // The listEntryOffset is a signed integer in case somebody wants
                         // to do something crazy like have a negative offset.
@@ -6329,10 +6367,11 @@ namespace MS.Dbg
                         if( ct.IsCancellationRequested )
                             break;
 
-                        curListEntry = ReadMemAs_pointer( curListEntry ); // reading Flink
+                        // The .Flink (or .Next) field should be the very first thing in the list entry.
+                        curListEntry = ReadMemAs_pointer( curListEntry );
 
                         idx++;
-                    } // end while( cur != head )
+                    } // end while( (cur != head) && cur )
                 }
                 catch( DbgEngException dee )
                 {
@@ -6429,12 +6468,101 @@ namespace MS.Dbg
 
                 foreach( var addr in EnumerateLIST_ENTRY_raw( headSym.Address,
                                                               entryType,
-                                                              "ActiveProcessLinks",
-                                                              ct ) )
+                                                              "ActiveProcessLinks" ) )
                 {
                     emit( new DbgKmProcessInfo( this, target, addr ) );
                 }
             } );
         } // end KmEnumerateProcesses()
+
+
+        /// <summary>
+        ///    Corresponds to the IDebugControlX GetSystemVersion method. Note that the
+        ///    numbers reported here are often lies, particularly in user mode.
+        ///
+        ///    Notes from dbgeng.h:
+        ///
+        ///    "GetSystemVersion always returns the kd major/minor version numbers, which
+        ///    are different than the Win32 version numbers. GetSystemVersionValues can be
+        ///    used to determine the Win32 version values."
+        /// </summary>
+        public void GetSystemVersion( out uint platformId,
+                                      out uint major,
+                                      out uint minor,
+                                      out string servicePackString,
+                                      out uint servicePack,
+                                      out string build )
+        {
+            uint tmpPlatformId  = platformId  = 0;
+            uint tmpMajor       = major       = 0;
+            uint tmpMinor       = minor       = 0;
+            uint tmpServicePack = servicePack = 0;
+
+            string tmpServicePackString = servicePackString = null;
+            string tmpBuild             = build             = null;
+
+            ExecuteOnDbgEngThread( () =>
+                {
+                    CheckHr( m_debugControl.GetSystemVersion( out tmpPlatformId,
+                                                              out tmpMajor,
+                                                              out tmpMinor,
+                                                              out tmpServicePackString,
+                                                              out tmpServicePack,
+                                                              out tmpBuild ) );
+                } );
+
+            platformId        = tmpPlatformId;
+            major             = tmpMajor;
+            minor             = tmpMinor;
+            servicePackString = tmpServicePackString;
+            servicePack       = tmpServicePack;
+            build             = tmpBuild;
+        }
+
+
+        /// <summary>
+        ///    Corresponds to the IDebugControlX GetSystemVersionValues method. Note that
+        ///    the numbers reported here are often lies, particularly in user mode.
+        /// </summary>
+        public void GetSystemVersionValues( out uint platformId,
+                                            out uint win32Major,
+                                            out uint win32Minor,
+                                            out uint kdMajor,
+                                            out uint kdMinor )
+        {
+            uint tmpPlatformId  = platformId = 0;
+            uint tmpWin32Major  = win32Major = 0;
+            uint tmpWin32Minor  = win32Minor = 0;
+            uint tmpKdMajor     = kdMajor    = 0;
+            uint tmpKdMinor     = kdMinor    = 0;
+
+            ExecuteOnDbgEngThread( () =>
+                {
+                    CheckHr( m_debugControl.GetSystemVersionValues( out tmpPlatformId,
+                                                                    out tmpWin32Major,
+                                                                    out tmpWin32Minor,
+                                                                    out tmpKdMajor,
+                                                                    out tmpKdMinor ) );
+                } );
+
+            platformId = tmpPlatformId;
+            win32Major = tmpWin32Major;
+            win32Minor = tmpWin32Minor;
+            kdMajor    = tmpKdMajor;
+            kdMinor    = tmpKdMinor;
+        }
+
+
+        /// <summary>
+        ///    Corresponds to the IDebugControlX GetSystemVersionStringWide method.
+        /// </summary>
+        public string GetSystemVersionString( DEBUG_SYSVERSTR which )
+        {
+            return ExecuteOnDbgEngThread( () =>
+                {
+                    CheckHr( m_debugControl.GetSystemVersionStringWide( which, out string str ) );
+                    return str;
+                } );
+        }
     } // end class DbgEngDebugger
 }
