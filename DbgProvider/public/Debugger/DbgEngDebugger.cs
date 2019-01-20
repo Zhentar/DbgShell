@@ -1033,6 +1033,26 @@ namespace MS.Dbg
                 } );
         } // end QueryTargetIs32Bit()
 
+        internal bool QueryTargetIsWow64()
+        {
+            return ExecuteOnDbgEngThread( () =>
+            {
+                CheckHr(m_debugControl.GetActualProcessorType(out IMAGE_FILE_MACHINE type ));
+                if( type == IMAGE_FILE_MACHINE.AMD64 || (uint)type == 0xAA64 /*ARM64*/ ) //Wow64 supported architectures
+                {
+                    CheckHr(m_debugSystemObjects.GetCurrentThreadTeb( out var teb ));
+                    var wow64offset = teb + 0x1488; //TODO: TlsSlots[1] - 1 == WOW64_TLS_CPURESERVED
+                    //Note that we want to do a 64-bit pointer read here regardless of the current effective pointer size
+                    _CheckMemoryReadHr( wow64offset, m_debugDataSpaces.ReadVirtualValue( wow64offset, out ulong cpureservedOffset ) );
+                    //now we have a pointer to a WOW64_CPURESERVED struct, which is a pair of ushort values
+                    //If we wanted to know the WoW guest architecture, we'd want to read the second one (only actually necessary
+                    //for windows builds >= 9925, which I presume was the first time it might have been a value other than i386.
+                    //but that's not what we are checking here.
+                    return cpureservedOffset != 0;
+                }
+                return false;
+            } );
+        }
 
         private RealDebugEventCallbacks m_internalEventCallbacks;
         private IDebugInputCallbacksImp m_inputCallbacks;
