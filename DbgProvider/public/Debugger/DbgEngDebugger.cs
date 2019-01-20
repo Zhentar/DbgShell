@@ -2148,6 +2148,14 @@ namespace MS.Dbg
                 } );
         } // end ReadMem()
 
+        public T ReadMemAs< T >( ulong address ) where T : unmanaged
+        {
+            return ExecuteOnDbgEngThread( () =>
+                {
+                    _CheckMemoryReadHr( address, m_debugDataSpaces.ReadVirtualValue( address, out T tempValue ) );
+                    return tempValue;
+                } );
+        }
 
         /// <summary>
         ///    Reads the specified number of bytes from the specified address in the
@@ -2357,74 +2365,62 @@ namespace MS.Dbg
 
         public short ReadMemAs_short( ulong address )
         {
-            byte[] raw = ReadMem( address, 2, true );
-            return BitConverter.ToInt16( raw, 0 );
+            return ReadMemAs< short >( address );
         } // end ReadMemAs_short()
 
         public ushort ReadMemAs_ushort( ulong address )
         {
-            byte[] raw = ReadMem( address, 2, true );
-            return BitConverter.ToUInt16( raw, 0 );
+            return ReadMemAs< ushort >( address );
         } // end ReadMemAs_ushort()
 
         public byte ReadMemAs_byte( ulong address )
         {
-            byte[] raw = ReadMem( address, 1, true );
-            return raw[ 0 ];
+            return ReadMemAs< byte >( address );
         } // end ReadMemAs_byte()
 
         public sbyte ReadMemAs_sbyte( ulong address )
         {
-            byte[] raw = ReadMem( address, 1, true );
-            return (sbyte) raw[ 0 ];
+            return ReadMemAs< sbyte >( address );
         } // end ReadMemAs_sbyte()
 
         public char ReadMemAs_WCHAR( ulong address )
         {
-            byte[] raw = ReadMem( address, 2, true );
-            return BitConverter.ToChar( raw, 0 );
+            return ReadMemAs< char >( address );
         } // end ReadMemAs_WCHAR()
 
         public int ReadMemAs_Int32( ulong address )
         {
-            byte[] raw = ReadMem( address, 4, true );
-            return BitConverter.ToInt32( raw, 0 );
+            return ReadMemAs< int >( address );
         } // end ReadMemAs_Int32()
 
         public uint ReadMemAs_UInt32( ulong address )
         {
-            byte[] raw = ReadMem( address, 4, true );
-            return BitConverter.ToUInt32( raw, 0 );
+            return ReadMemAs< uint >( address );
         } // end ReadMemAs_UInt32()
 
         public long ReadMemAs_Int64( ulong address )
         {
-            byte[] raw = ReadMem( address, 8, true );
-            return BitConverter.ToInt64( raw, 0 );
+            return ReadMemAs< long >( address );
         } // end ReadMemAs_Int64()
 
         public ulong ReadMemAs_UInt64( ulong address )
         {
-            byte[] raw = ReadMem( address, 8, true );
-            return BitConverter.ToUInt64( raw, 0 );
+            return ReadMemAs< ulong >( address );
         } // end ReadMemAs_UInt64()
 
         public bool ReadMemAs_CPlusPlusBool( ulong address )
         {
-            byte[] raw = ReadMem( address, 1, true );
-            return BitConverter.ToBoolean( raw, 0 );
+            return ReadMemAs< byte >( address ) != 0;
         } // end ReadMemAs_CPlusPlusBool()
 
         public float ReadMemAs_float( ulong address )
         {
-            byte[] raw = ReadMem( address, 4, true );
-            return BitConverter.ToSingle( raw, 0 );
+            return ReadMemAs< float >( address );
         } // end ReadMemAs_float()
 
         public double ReadMemAs_double( ulong address )
         {
-            byte[] raw = ReadMem( address, 8, true );
-            return BitConverter.ToDouble( raw, 0 );
+            return ReadMemAs< double >( address );
         } // end ReadMemAs_double()
 
         public ulong ReadMemAs_pointer( ulong address )
@@ -2435,8 +2431,7 @@ namespace MS.Dbg
 
         public Guid ReadMemAs_Guid( ulong address )
         {
-            byte[] raw = ReadMem( address, 16, true );
-            return new Guid( raw );
+            return ReadMemAs< Guid >( address );
         } // end ReadMemAs_Guid()
 
         public T[] ReadMemAs_TArray< T >( ulong address, uint count ) where T: unmanaged
