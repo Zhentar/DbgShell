@@ -1046,8 +1046,8 @@ namespace MS.Dbg
                     _CheckMemoryReadHr( wow64offset, m_debugDataSpaces.ReadVirtualValue( wow64offset, out ulong cpureservedOffset ) );
                     //now we have a pointer to a WOW64_CPURESERVED struct, which is a pair of ushort values
                     //If we wanted to know the WoW guest architecture, we'd want to read the second one (only actually necessary
-                    //for windows builds >= 9925, which I presume was the first time it might have been a value other than i386.
-                    //but that's not what we are checking here.
+                    //for windows builds >= 9925, which I presume was the first time it might have been a value other than i386).
+                    //but that it populated at all tells us it is indeed Wow64.
                     return cpureservedOffset != 0;
                 }
                 return false;
@@ -2116,7 +2116,7 @@ namespace MS.Dbg
 
         //Retrieves the ntdll module associated with what DbgEng considers to be the native architecture
         //regardless of the current effective machine type
-        public DbgModuleInfo GetNativeNtDllModule()
+        public DbgModuleInfo GetNtdllModuleNative()
         {
             return ExecuteOnDbgEngThread( () =>
             {
@@ -2127,7 +2127,7 @@ namespace MS.Dbg
 
         //Retrieves the 32 bit ntdll module, whether it is a pure 32 bit process or WoW64
         //Throws on pure 64 bit processes
-        public DbgModuleInfo Get32bitNtDllModule()
+        public DbgModuleInfo GetNtdllModule32()
         {
             return ExecuteOnDbgEngThread( () =>
             {
@@ -2135,6 +2135,42 @@ namespace MS.Dbg
                 return GetModuleByAddress( modBase );
             } );
         } // end Get32bitNtDllModule()
+
+        public ulong GetCurrentThreadTebAddressNative()
+        {
+            return Debugger.ExecuteOnDbgEngThread( () =>
+            {
+                CheckHr( m_debugSystemObjects.GetCurrentThreadTeb( out var teb ) );
+                return teb;
+            } );
+        } // end GetCurrentThreadTebAddressNative()
+
+        public DbgSymbol GetCurrentThreadTebNative( CancellationToken token )
+        {
+            return Debugger.ExecuteOnDbgEngThread( () =>
+            {
+                try
+                {
+                    CheckHr( m_debugSystemObjects.GetCurrentThreadTeb( out var tebAddress ) );
+                    var tebType = Debugger.GetModuleTypeByName( Debugger.GetNtdllModuleNative(),
+                                                                "_TEB",
+                                                               token );
+                    var tebSym = Debugger.CreateSymbolForAddressAndType( tebAddress,
+                                                                       tebType,
+                                                                       $"Thread_0x{m_cachedContext.ThreadIndexOrAddress}_TEB" );
+                    return tebSym;
+                }
+                catch( DbgProviderException dpe )
+                {
+                    throw new DbgProviderException( "Could not create symbol for TEB. Are you missing the PDB for ntdll?",
+                                                    "NoTebSymbol",
+                                                    System.Management.Automation.ErrorCategory.ObjectNotFound,
+                                                    dpe,
+                                                    this );
+                }
+            } );
+        }  // end GetCurrentThreadTebNative()
+
 
         public byte[] ReadMem( ulong address, uint lengthDesired )
         {
@@ -3457,13 +3493,13 @@ namespace MS.Dbg
             }
             else if ( "nt" == modName )
             {
-                var ntdllModule = GetNativeNtDllModule();
+                var ntdllModule = GetNtdllModuleNative();
                 modName = ntdllModule.Name;
                 pattern = modName + "!" + pattern.Substring( bangIdx + 1 );
             }
             else if( "nt32" == modName )
             {
-                var ntdllModule = Get32bitNtDllModule();
+                var ntdllModule = GetNtdllModule32();
                 modName = ntdllModule.Name;
                 pattern = modName + "!" + pattern.Substring( bangIdx + 1 );
             }
@@ -3591,14 +3627,7 @@ namespace MS.Dbg
             string modName;
             string bareSym;
             ulong offset;
-            // TODO: BUGBUG: Crud, what about types with a '+' in the name?
             DbgProvider.ParseSymbolName( typeName, out modName, out bareSym, out offset );
-         // if( 0 != offset )
-         // {
-         //     throw new ArgumentException( Util.Sprintf( "You can't provide an offset as part of a type name ().",
-         //                                                pattern ),
-         //                                  "pattern" );
-         // }
 
 
             var mods = GetModuleByName( modName, cancelToken ).ToArray();
@@ -3616,13 +3645,26 @@ namespace MS.Dbg
 
             DbgModuleInfo mod = mods[ 0 ];
 
-            _EnsureSymbolsLoaded( mod, cancelToken );
+            return GetModuleTypeByName( mod, bareSym, cancelToken );
+        } // end GetSingleTypeByName()
 
+        public DbgNamedTypeInfo GetModuleTypeByName( DbgModuleInfo module,
+                                                     string typeName )
+        {
+            return GetModuleTypeByName( module, typeName, CancellationToken.None );
+        } // end GetModuleTypeByName()
+
+        public DbgNamedTypeInfo GetModuleTypeByName( DbgModuleInfo module, 
+                                                     string typeName,
+                                                     CancellationToken cancelToken)
+        {
+
+            _EnsureSymbolsLoaded( module, cancelToken );
             return ExecuteOnDbgEngThread( () =>
             {
                 SymbolInfo symInfo = DbgHelp.TryGetTypeFromName( m_debugClient,
-                                                                 mod.BaseAddress,
-                                                                 bareSym );
+                                                                 module.BaseAddress,
+                                                                 typeName );
 
                 if( null != symInfo )
                 {
@@ -3635,8 +3677,7 @@ namespace MS.Dbg
 
                 return null;
             } );
-        } // end GetSingleTypeByName()
-
+        } // end GetModuleTypeByName()
 
         public IEnumerable<DbgNamedTypeInfo> GetTypeInfoByName( string pattern )
         {
