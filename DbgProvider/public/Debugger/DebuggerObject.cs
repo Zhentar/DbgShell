@@ -36,11 +36,11 @@ namespace MS.Dbg
         // These 0xd.. codes are the result of HRESULT_FROM_NT( 0xc... ).
         internal const int HR_STATUS_PORT_ALREADY_SET = unchecked( (int) 0xd0000048 );
         internal const int HR_STATUS_PORT_NOT_SET     = unchecked( (int) 0xd0000353 );
-        internal const int HR_STATUS_NOT_SUPPORTED    = unchecked( (int) 0xd00000bb );
-        internal const int HR_STATUS_NO_PAGEFILE      = unchecked( (int) 0xd0000147 );
-	    internal const int HR_STATUS_NO_MORE_ENTRIES  = unchecked( (int) 0x9000001a );
+        internal const int HR_STATUS_NOT_SUPPORTED = unchecked((int) 0xd00000bb);
+        internal const int HR_STATUS_NO_PAGEFILE = unchecked((int) 0xd0000147);
+        internal const int HR_STATUS_NO_MORE_ENTRIES = unchecked((int) 0x9000001a);
 
-		internal const ulong InvalidAddress = unchecked( (ulong) 0xffffffffffffffff ); // like DEBUG_INVALID_OFFSET
+        internal const ulong InvalidAddress = unchecked((ulong) 0xffffffffffffffff); // like DEBUG_INVALID_OFFSET
 
         public DbgEngDebugger Debugger { get; private set; }
 

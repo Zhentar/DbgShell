@@ -2243,26 +2243,8 @@ namespace MS.Dbg
             byte[] tmpMem = null;
             var retval = ExecuteOnDbgEngThread( () =>
                 {
-                    byte[] raw;
-                    int hr = m_debugDataSpaces.ReadVirtual( address, lengthDesired, out raw );
-                    if( 0 != hr )
-                    {
-                        // I wonder if this will be too noisy?
-                        LogManager.Trace( "ReadVirtual( {0} ) failed with error {1}.",
-                                          DbgProvider.FormatAddress( address, Debugger.TargetIs32Bit, true ),
-                                          Util.FormatErrorCode( hr ) );
-                        return false;
-                    }
-
-                    if( raw.Length != lengthDesired )
-                    {
-                        if( failIfReadSmaller )
-                            return false;
-
-                        // TODO: log warning?
-                    }
-                    tmpMem = raw;
-                    return true;
+                    int hr = m_debugDataSpaces.ReadVirtual( address, lengthDesired, out byte[] raw );
+                    return _TryCheckMemoryReadHr( hr ) && (raw.Length == lengthDesired || !failIfReadSmaller);
                 } );
             mem = tmpMem;
             return retval;
@@ -2283,16 +2265,16 @@ namespace MS.Dbg
             CheckHr( hr );
         } // end _CheckMemoryReadHr()
 
-        private bool _TryCheckMemoryReadHr(int hr)
+        private bool _TryCheckMemoryReadHr( int hr )
         {
-            if ((HR_ERROR_READ_FAULT == hr) ||
+            if( (HR_ERROR_READ_FAULT == hr) ||
                 (HR_STATUS_NO_PAGEFILE == hr) ||
                 (E_NOINTERFACE == hr) ||
-                (HR_STATUS_NO_MORE_ENTRIES == hr))
+                (HR_STATUS_NO_MORE_ENTRIES == hr) )
             {
                 return false;
             }
-            CheckHr(hr);
+            CheckHr( hr );
             return true;
         }
 
@@ -2344,16 +2326,7 @@ namespace MS.Dbg
             var retval = ExecuteOnDbgEngThread( () =>
                 {
                     int hr = m_debugDataSpaces.ReadPointersVirtual( numDesired, address, out tmpPointers );
-                    // TODO: what happens if we can't read that many pointers? What error is returned?
-                    if( 0 == hr )
-                        return true;
-                    else if( HR_ERROR_READ_FAULT == hr )
-                        return false;
-                    else
-                    {
-                        CheckHr( hr ); // we'll still throw for other types of problems.
-                        return false;
-                    }
+                    return _TryCheckMemoryReadHr( hr );
                 } );
             pointers = tmpPointers;
             return retval;
