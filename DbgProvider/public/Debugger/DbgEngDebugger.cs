@@ -2147,30 +2147,73 @@ namespace MS.Dbg
 
         public DbgSymbol GetCurrentThreadTebNative( CancellationToken token )
         {
+            return _CreateNtdllSymbolForAddress( force32bit: false,
+                                                 GetCurrentThreadTebAddressNative(),
+                                                 "_TEB",
+                                                 $"Thread_0x{m_cachedContext.ThreadIndexOrAddress}_TEB",
+                                                 token );
+        }  // end GetCurrentThreadTebNative()
+
+        public ulong GetCurrentThreadTebAddress32()
+        {
+            return Debugger.ExecuteOnDbgEngThread( () =>
+            {
+                var nativeTebAddress = GetCurrentThreadTebAddressNative();
+                if(QueryTargetIsWow64())
+                {
+                    var tebType = Debugger.GetModuleTypeByName( GetNtdllModuleNative(), "_TEB" );
+                    var wowtebOffset = 8192u; //It's been that for 15 years now, so seems like a safe enough default
+                    if(tebType is DbgUdtTypeInfo udtType)
+                    {
+                        var wowtebOffsetOffset = udtType.FindMemberOffset( "WowTebOffset" );
+                        wowtebOffset = ReadMemAs< uint >( nativeTebAddress + wowtebOffsetOffset );
+                    }
+                    return nativeTebAddress + wowtebOffset;
+                }
+                else
+                {
+                    if( !TargetIs32Bit )
+                    {
+                        throw new DbgProviderException( "No 32 bit guest TEB to retrieve",
+                                                        "Not32bit",
+                                                        System.Management.Automation.ErrorCategory.InvalidOperation,
+                                                        this );
+                    }
+                    return nativeTebAddress;
+                }
+            } );
+        } // end GetCurrentThreadTebAddress32()
+
+        public DbgSymbol GetCurrentThreadTeb32( CancellationToken token )
+        {
+            return _CreateNtdllSymbolForAddress( force32bit: true, 
+                                                 GetCurrentThreadTebAddress32(), 
+                                                 "_TEB", 
+                                                 $"Thread_0x{m_cachedContext.ThreadIndexOrAddress}_TEB32", 
+                                                 token );
+        }  // end GetCurrentThreadTeb32()
+
+        internal DbgSymbol _CreateNtdllSymbolForAddress( bool force32bit, ulong address, string type, string symbolName, CancellationToken token )
+        {
             return Debugger.ExecuteOnDbgEngThread( () =>
             {
                 try
                 {
-                    CheckHr( m_debugSystemObjects.GetCurrentThreadTeb( out var tebAddress ) );
-                    var tebType = Debugger.GetModuleTypeByName( Debugger.GetNtdllModuleNative(),
-                                                                "_TEB",
-                                                               token );
-                    var tebSym = Debugger.CreateSymbolForAddressAndType( tebAddress,
-                                                                       tebType,
-                                                                       $"Thread_0x{m_cachedContext.ThreadIndexOrAddress}_TEB" );
+                    var module = force32bit ? GetNtdllModule32() : GetNtdllModuleNative();
+                    var tebType = GetModuleTypeByName( module, type, token );
+                    var tebSym = CreateSymbolForAddressAndType( address, tebType, symbolName );
                     return tebSym;
                 }
                 catch( DbgProviderException dpe )
                 {
-                    throw new DbgProviderException( "Could not create symbol for TEB. Are you missing the PDB for ntdll?",
+                    throw new DbgProviderException( $"Could not create symbol for {type}. Are you missing the PDB for ntdll?",
                                                     "NoTebSymbol",
                                                     System.Management.Automation.ErrorCategory.ObjectNotFound,
                                                     dpe,
                                                     this );
                 }
             } );
-        }  // end GetCurrentThreadTebNative()
-
+        } // end _CreateNtdllSymbolForAddress
 
         public byte[] ReadMem( ulong address, uint lengthDesired )
         {
