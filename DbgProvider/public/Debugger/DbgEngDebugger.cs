@@ -2114,6 +2114,27 @@ namespace MS.Dbg
             } );
         } // end GetModuleByName()
 
+        //Retrieves the ntdll module associated with what DbgEng considers to be the native architecture
+        //regardless of the current effective machine type
+        public DbgModuleInfo GetNativeNtDllModule()
+        {
+            return ExecuteOnDbgEngThread( () =>
+            {
+                CheckHr( m_debugSymbols.GetSymbolModuleWide( "${$ntnsym}!", out var modBase ) );
+                return GetModuleByAddress( modBase );
+            } );
+        } // end GetNativeNtDllModule()
+
+        //Retrieves the 32 bit ntdll module, whether it is a pure 32 bit process or WoW64
+        //Throws on pure 64 bit processes
+        public DbgModuleInfo Get32bitNtDllModule()
+        {
+            return ExecuteOnDbgEngThread( () =>
+            {
+                CheckHr( m_debugSymbols.GetSymbolModuleWide( "${$ntwsym}!", out var modBase ) );
+                return GetModuleByAddress( modBase );
+            } );
+        } // end Get32bitNtDllModule()
 
         public byte[] ReadMem( ulong address, uint lengthDesired )
         {
@@ -3404,11 +3425,7 @@ namespace MS.Dbg
             string bareSym;
             ulong offset;
             DbgProvider.ParseSymbolName( pattern, out modName, out bareSym, out offset );
-            if( pattern.IndexOf( '!' ) < 0 )
-            {
-                Util.Assert( 0 == Util.Strcmp_OI( "*", modName ) );
-                pattern = "*!" + pattern;
-            }
+            pattern = AdjustPattern( pattern, ref modName );
 
             _EnsureSymbolsLoaded( modName, cancelToken );
 
@@ -3430,6 +3447,29 @@ namespace MS.Dbg
             } );
         } // end FindSymbol_Enum()
 
+        private string AdjustPattern( string pattern, ref string modName )
+        {
+            var bangIdx = pattern.IndexOf( '!' );
+            if( bangIdx < 0 )
+            {
+                Util.Assert( 0 == Util.Strcmp_OI( "*", modName ) );
+                pattern = "*!" + pattern;
+            }
+            else if ( "nt" == modName )
+            {
+                var ntdllModule = GetNativeNtDllModule();
+                modName = ntdllModule.Name;
+                pattern = modName + "!" + pattern.Substring( bangIdx + 1 );
+            }
+            else if( "nt32" == modName )
+            {
+                var ntdllModule = Get32bitNtDllModule();
+                modName = ntdllModule.Name;
+                pattern = modName + "!" + pattern.Substring( bangIdx + 1 );
+            }
+
+            return pattern;
+        }
 
         public IEnumerable< DbgSymbol > FindSymbol_Search( string pattern )
         {
@@ -3459,11 +3499,7 @@ namespace MS.Dbg
             string bareSym;
             ulong offset;
             DbgProvider.ParseSymbolName( pattern, out modName, out bareSym, out offset );
-            if( pattern.IndexOf( '!' ) < 0 )
-            {
-                Util.Assert( 0 == Util.Strcmp_OI( "*", modName ) );
-                pattern = "*!" + pattern;
-            }
+            pattern = AdjustPattern( pattern, ref modName );
 
             _EnsureSymbolsLoaded( modName, cancelToken );
 
@@ -3654,21 +3690,12 @@ namespace MS.Dbg
                                                           Func< SymbolInfo, T > convert )
         {
             // May need to trigger symbol load; dbghelp won't do it.
-
-            if( pattern.IndexOf( '!' ) < 0 )
-                pattern = "*!" + pattern;
-
             string modName;
             string bareSym;
             ulong offset;
-            // TODO: BUGBUG: Crud, what about types with a '+' in the name?
+
             DbgProvider.ParseSymbolName( pattern, out modName, out bareSym, out offset );
-         // if( 0 != offset )
-         // {
-         //     throw new ArgumentException( Util.Sprintf( "You can't provide an offset as part of a type name ().",
-         //                                                pattern ),
-         //                                  "pattern" );
-         // }
+            pattern = AdjustPattern( pattern, ref modName );
 
             _EnsureSymbolsLoaded( modName, cancelToken );
 
