@@ -1035,6 +1035,26 @@ namespace MS.Dbg
                 } );
         } // end QueryTargetIs32Bit()
 
+        internal bool QueryTargetIsWow64()
+        {
+            return ExecuteOnDbgEngThread( () =>
+            {
+                CheckHr(m_debugControl.GetActualProcessorType(out IMAGE_FILE_MACHINE type ));
+                if( type == IMAGE_FILE_MACHINE.AMD64 || (uint)type == 0xAA64 /*ARM64*/ ) //Wow64 supported architectures
+                {
+                    CheckHr(m_debugSystemObjects.GetCurrentThreadTeb( out var teb ));
+                    var wow64offset = teb + 0x1488; //TODO: TlsSlots[1] - 1 == WOW64_TLS_CPURESERVED
+                    //Note that we want to do a 64-bit pointer read here regardless of the current effective pointer size
+                    _CheckMemoryReadHr( wow64offset, m_debugDataSpaces.ReadVirtualValue( wow64offset, out ulong cpureservedOffset ) );
+                    //now we have a pointer to a WOW64_CPURESERVED struct, which is a pair of ushort values
+                    //If we wanted to know the WoW guest architecture, we'd want to read the second one (only actually necessary
+                    //for windows builds >= 9925, which I presume was the first time it might have been a value other than i386).
+                    //but that it populated at all tells us it is indeed Wow64.
+                    return cpureservedOffset != 0;
+                }
+                return false;
+            } );
+        }
 
         private RealDebugEventCallbacks m_internalEventCallbacks;
         private IDebugInputCallbacksImp m_inputCallbacks;
@@ -2096,6 +2116,106 @@ namespace MS.Dbg
             } );
         } // end GetModuleByName()
 
+        //Retrieves the ntdll module associated with what DbgEng considers to be the native architecture
+        //regardless of the current effective machine type
+        public DbgModuleInfo GetNtdllModuleNative()
+        {
+            return ExecuteOnDbgEngThread( () =>
+            {
+                CheckHr( m_debugSymbols.GetSymbolModuleWide( "${$ntnsym}!", out var modBase ) );
+                return GetModuleByAddress( modBase );
+            } );
+        } // end GetNativeNtDllModule()
+
+        //Retrieves the 32 bit ntdll module, whether it is a pure 32 bit process or WoW64
+        //Throws on pure 64 bit processes
+        public DbgModuleInfo GetNtdllModule32()
+        {
+            return ExecuteOnDbgEngThread( () =>
+            {
+                CheckHr( m_debugSymbols.GetSymbolModuleWide( "${$ntwsym}!", out var modBase ) );
+                return GetModuleByAddress( modBase );
+            } );
+        } // end Get32bitNtDllModule()
+
+        public ulong GetCurrentThreadTebAddressNative()
+        {
+            return Debugger.ExecuteOnDbgEngThread( () =>
+            {
+                CheckHr( m_debugSystemObjects.GetCurrentThreadTeb( out var teb ) );
+                return teb;
+            } );
+        } // end GetCurrentThreadTebAddressNative()
+
+        public DbgSymbol GetCurrentThreadTebNative( CancellationToken token )
+        {
+            return _CreateNtdllSymbolForAddress( force32bit: false,
+                                                 GetCurrentThreadTebAddressNative(),
+                                                 "_TEB",
+                                                 $"Thread_0x{m_cachedContext.ThreadIndexOrAddress}_TEB",
+                                                 token );
+        }  // end GetCurrentThreadTebNative()
+
+        public ulong GetCurrentThreadTebAddress32()
+        {
+            return Debugger.ExecuteOnDbgEngThread( () =>
+            {
+                var nativeTebAddress = GetCurrentThreadTebAddressNative();
+                if(QueryTargetIsWow64())
+                {
+                    var tebType = Debugger.GetModuleTypeByName( GetNtdllModuleNative(), "_TEB" );
+                    var wowtebOffset = 8192u; //It's been that for 15 years now, so seems like a safe enough default
+                    if(tebType is DbgUdtTypeInfo udtType && udtType.Members.HasItemNamed( "WowTebOffset" ))
+                    {
+                        var wowtebOffsetOffset = udtType.FindMemberOffset( "WowTebOffset" );
+                        wowtebOffset = ReadMemAs< uint >( nativeTebAddress + wowtebOffsetOffset );
+                    }
+                    return nativeTebAddress + wowtebOffset;
+                }
+                else
+                {
+                    if( !TargetIs32Bit )
+                    {
+                        throw new DbgProviderException( "No 32 bit guest TEB to retrieve",
+                                                        "Not32bit",
+                                                        System.Management.Automation.ErrorCategory.InvalidOperation,
+                                                        this );
+                    }
+                    return nativeTebAddress;
+                }
+            } );
+        } // end GetCurrentThreadTebAddress32()
+
+        public DbgSymbol GetCurrentThreadTeb32( CancellationToken token )
+        {
+            return _CreateNtdllSymbolForAddress( force32bit: true, 
+                                                 GetCurrentThreadTebAddress32(), 
+                                                 "_TEB", 
+                                                 $"Thread_0x{m_cachedContext.ThreadIndexOrAddress}_TEB32", 
+                                                 token );
+        }  // end GetCurrentThreadTeb32()
+
+        internal DbgSymbol _CreateNtdllSymbolForAddress( bool force32bit, ulong address, string type, string symbolName, CancellationToken token )
+        {
+            return Debugger.ExecuteOnDbgEngThread( () =>
+            {
+                try
+                {
+                    var module = force32bit ? GetNtdllModule32() : GetNtdllModuleNative();
+                    var tebType = GetModuleTypeByName( module, type, token );
+                    var tebSym = CreateSymbolForAddressAndType( address, tebType, symbolName );
+                    return tebSym;
+                }
+                catch( DbgProviderException dpe )
+                {
+                    throw new DbgProviderException( $"Could not create symbol for {type}. Are you missing the PDB for ntdll?",
+                                                    "NoTebSymbol",
+                                                    System.Management.Automation.ErrorCategory.ObjectNotFound,
+                                                    dpe,
+                                                    this );
+                }
+            } );
+        } // end _CreateNtdllSymbolForAddress
 
         public byte[] ReadMem( ulong address, uint lengthDesired )
         {
@@ -2130,6 +2250,14 @@ namespace MS.Dbg
                 } );
         } // end ReadMem()
 
+        public T ReadMemAs< T >( ulong address ) where T : unmanaged
+        {
+            return ExecuteOnDbgEngThread( () =>
+                {
+                    _CheckMemoryReadHr( address, m_debugDataSpaces.ReadVirtualValue( address, out T tempValue ) );
+                    return tempValue;
+                } );
+        }
 
         internal unsafe bool TryReadVirtualDirect(ulong address, Span<byte> buffer)
         {
@@ -2349,74 +2477,62 @@ namespace MS.Dbg
 
         public short ReadMemAs_short( ulong address )
         {
-            byte[] raw = ReadMem( address, 2, true );
-            return BitConverter.ToInt16( raw, 0 );
+            return ReadMemAs< short >( address );
         } // end ReadMemAs_short()
 
         public ushort ReadMemAs_ushort( ulong address )
         {
-            byte[] raw = ReadMem( address, 2, true );
-            return BitConverter.ToUInt16( raw, 0 );
+            return ReadMemAs< ushort >( address );
         } // end ReadMemAs_ushort()
 
         public byte ReadMemAs_byte( ulong address )
         {
-            byte[] raw = ReadMem( address, 1, true );
-            return raw[ 0 ];
+            return ReadMemAs< byte >( address );
         } // end ReadMemAs_byte()
 
         public sbyte ReadMemAs_sbyte( ulong address )
         {
-            byte[] raw = ReadMem( address, 1, true );
-            return (sbyte) raw[ 0 ];
+            return ReadMemAs< sbyte >( address );
         } // end ReadMemAs_sbyte()
 
         public char ReadMemAs_WCHAR( ulong address )
         {
-            byte[] raw = ReadMem( address, 2, true );
-            return BitConverter.ToChar( raw, 0 );
+            return ReadMemAs< char >( address );
         } // end ReadMemAs_WCHAR()
 
         public int ReadMemAs_Int32( ulong address )
         {
-            byte[] raw = ReadMem( address, 4, true );
-            return BitConverter.ToInt32( raw, 0 );
+            return ReadMemAs< int >( address );
         } // end ReadMemAs_Int32()
 
         public uint ReadMemAs_UInt32( ulong address )
         {
-            byte[] raw = ReadMem( address, 4, true );
-            return BitConverter.ToUInt32( raw, 0 );
+            return ReadMemAs< uint >( address );
         } // end ReadMemAs_UInt32()
 
         public long ReadMemAs_Int64( ulong address )
         {
-            byte[] raw = ReadMem( address, 8, true );
-            return BitConverter.ToInt64( raw, 0 );
+            return ReadMemAs< long >( address );
         } // end ReadMemAs_Int64()
 
         public ulong ReadMemAs_UInt64( ulong address )
         {
-            byte[] raw = ReadMem( address, 8, true );
-            return BitConverter.ToUInt64( raw, 0 );
+            return ReadMemAs< ulong >( address );
         } // end ReadMemAs_UInt64()
 
         public bool ReadMemAs_CPlusPlusBool( ulong address )
         {
-            byte[] raw = ReadMem( address, 1, true );
-            return BitConverter.ToBoolean( raw, 0 );
+            return ReadMemAs< byte >( address ) != 0;
         } // end ReadMemAs_CPlusPlusBool()
 
         public float ReadMemAs_float( ulong address )
         {
-            byte[] raw = ReadMem( address, 4, true );
-            return BitConverter.ToSingle( raw, 0 );
+            return ReadMemAs< float >( address );
         } // end ReadMemAs_float()
 
         public double ReadMemAs_double( ulong address )
         {
-            byte[] raw = ReadMem( address, 8, true );
-            return BitConverter.ToDouble( raw, 0 );
+            return ReadMemAs< double >( address );
         } // end ReadMemAs_double()
 
         public ulong ReadMemAs_pointer( ulong address )
@@ -2427,8 +2543,7 @@ namespace MS.Dbg
 
         public Guid ReadMemAs_Guid( ulong address )
         {
-            byte[] raw = ReadMem( address, 16, true );
-            return new Guid( raw );
+            return ReadMemAs< Guid >( address );
         } // end ReadMemAs_Guid()
 
         public T[] ReadMemAs_TArray< T >( ulong address, uint count ) where T: unmanaged
@@ -3401,11 +3516,7 @@ namespace MS.Dbg
             string bareSym;
             ulong offset;
             DbgProvider.ParseSymbolName( pattern, out modName, out bareSym, out offset );
-            if( pattern.IndexOf( '!' ) < 0 )
-            {
-                Util.Assert( 0 == Util.Strcmp_OI( "*", modName ) );
-                pattern = "*!" + pattern;
-            }
+            pattern = AdjustPattern( pattern, ref modName );
 
             _EnsureSymbolsLoaded( modName, cancelToken );
 
@@ -3427,6 +3538,29 @@ namespace MS.Dbg
             } );
         } // end FindSymbol_Enum()
 
+        private string AdjustPattern( string pattern, ref string modName )
+        {
+            var bangIdx = pattern.IndexOf( '!' );
+            if( bangIdx < 0 )
+            {
+                Util.Assert( 0 == Util.Strcmp_OI( "*", modName ) );
+                pattern = "*!" + pattern;
+            }
+            else if ( "nt" == modName )
+            {
+                var ntdllModule = GetNtdllModuleNative();
+                modName = ntdllModule.Name;
+                pattern = modName + "!" + pattern.Substring( bangIdx + 1 );
+            }
+            else if( "nt32" == modName )
+            {
+                var ntdllModule = GetNtdllModule32();
+                modName = ntdllModule.Name;
+                pattern = modName + "!" + pattern.Substring( bangIdx + 1 );
+            }
+
+            return pattern;
+        }
 
         public IDiaSession GetDiaSession(ulong moduleBase)
         {
@@ -3462,11 +3596,7 @@ namespace MS.Dbg
             string bareSym;
             ulong offset;
             DbgProvider.ParseSymbolName( pattern, out modName, out bareSym, out offset );
-            if( pattern.IndexOf( '!' ) < 0 )
-            {
-                Util.Assert( 0 == Util.Strcmp_OI( "*", modName ) );
-                pattern = "*!" + pattern;
-            }
+            pattern = AdjustPattern( pattern, ref modName );
 
             _EnsureSymbolsLoaded( modName, cancelToken );
 
@@ -3558,14 +3688,7 @@ namespace MS.Dbg
             string modName;
             string bareSym;
             ulong offset;
-            // TODO: BUGBUG: Crud, what about types with a '+' in the name?
             DbgProvider.ParseSymbolName( typeName, out modName, out bareSym, out offset );
-         // if( 0 != offset )
-         // {
-         //     throw new ArgumentException( Util.Sprintf( "You can't provide an offset as part of a type name ().",
-         //                                                pattern ),
-         //                                  "pattern" );
-         // }
 
 
             var mods = GetModuleByName( modName, cancelToken ).ToArray();
@@ -3583,13 +3706,26 @@ namespace MS.Dbg
 
             DbgModuleInfo mod = mods[ 0 ];
 
-            _EnsureSymbolsLoaded( mod, cancelToken );
+            return GetModuleTypeByName( mod, bareSym, cancelToken );
+        } // end GetSingleTypeByName()
 
+        public DbgNamedTypeInfo GetModuleTypeByName( DbgModuleInfo module,
+                                                     string typeName )
+        {
+            return GetModuleTypeByName( module, typeName, CancellationToken.None );
+        } // end GetModuleTypeByName()
+
+        public DbgNamedTypeInfo GetModuleTypeByName( DbgModuleInfo module, 
+                                                     string typeName,
+                                                     CancellationToken cancelToken)
+        {
+
+            _EnsureSymbolsLoaded( module, cancelToken );
             return ExecuteOnDbgEngThread( () =>
             {
                 SymbolInfo symInfo = DbgHelp.TryGetTypeFromName( m_debugClient,
-                                                                 mod.BaseAddress,
-                                                                 bareSym );
+                                                                 module.BaseAddress,
+                                                                 typeName );
 
                 if( null != symInfo )
                 {
@@ -3602,8 +3738,7 @@ namespace MS.Dbg
 
                 return null;
             } );
-        } // end GetSingleTypeByName()
-
+        } // end GetModuleTypeByName()
 
         public IEnumerable<DbgNamedTypeInfo> GetTypeInfoByName( string pattern )
         {
@@ -3657,21 +3792,12 @@ namespace MS.Dbg
                                                           Func< SymbolInfo, T > convert )
         {
             // May need to trigger symbol load; dbghelp won't do it.
-
-            if( pattern.IndexOf( '!' ) < 0 )
-                pattern = "*!" + pattern;
-
             string modName;
             string bareSym;
             ulong offset;
-            // TODO: BUGBUG: Crud, what about types with a '+' in the name?
+
             DbgProvider.ParseSymbolName( pattern, out modName, out bareSym, out offset );
-         // if( 0 != offset )
-         // {
-         //     throw new ArgumentException( Util.Sprintf( "You can't provide an offset as part of a type name ().",
-         //                                                pattern ),
-         //                                  "pattern" );
-         // }
+            pattern = AdjustPattern( pattern, ref modName );
 
             _EnsureSymbolsLoaded( modName, cancelToken );
 
