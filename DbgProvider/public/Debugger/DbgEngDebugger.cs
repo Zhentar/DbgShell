@@ -2163,7 +2163,7 @@ namespace MS.Dbg
                 {
                     var tebType = Debugger.GetModuleTypeByName( GetNtdllModuleNative(), "_TEB" );
                     var wowtebOffset = 8192u; //It's been that for 15 years now, so seems like a safe enough default
-                    if(tebType is DbgUdtTypeInfo udtType)
+                    if(tebType is DbgUdtTypeInfo udtType && udtType.Members.HasItemNamed( "WowTebOffset" ))
                     {
                         var wowtebOffsetOffset = udtType.FindMemberOffset( "WowTebOffset" );
                         wowtebOffset = ReadMemAs< uint >( nativeTebAddress + wowtebOffsetOffset );
