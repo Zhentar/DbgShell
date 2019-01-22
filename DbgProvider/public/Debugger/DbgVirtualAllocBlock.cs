@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Microsoft.Diagnostics.Runtime.Interop;
 
 namespace MS.Dbg
@@ -135,7 +136,8 @@ namespace MS.Dbg
 
         public static IEnumerable<ulong> AllHeaps(DbgEngDebugger debugger)
         {
-            dynamic peb = DbgPseudoRegisterInfo.GetDbgPsedoRegisterInfo(debugger, "$peb").Value;
+            dynamic teb = debugger.GetCurrentThreadTebNative( CancellationToken.None ).Value;
+            dynamic peb = teb.ProcessEnvironmentBlock.DbgGetPointee();
             uint numberOfHeaps = peb.NumberOfHeaps.ToUint32(null);
             return debugger.ReadMemPointers((ulong)peb.ProcessHeaps.DbgGetPointer(), numberOfHeaps);
         }
@@ -145,10 +147,11 @@ namespace MS.Dbg
         {
             var heap = GetHeap(heapBase, debugger);
             var segmenttype = GetHeapSegmentType(debugger);
+            var segmentList = (ulong)heap.SegmentList.DbgGetOperativeSymbol().Address;
 
-            foreach (dynamic segment in debugger.EnumerateLIST_ENTRY(heap.SegmentList, segmenttype, "SegmentListEntry"))
+            foreach (dynamic segment in debugger.EnumerateLIST_ENTRY( segmentList, segmenttype, "SegmentListEntry" ))
             {
-                uint baseAddress = (uint)segment.BaseAddress.DbgGetPointer();
+                ulong baseAddress = (ulong)segment.WrappingPSObject.BaseAddress.DbgGetPointer();
                 yield return new DbgVirtualAllocBlock(baseAddress, debugger);
             }
 
@@ -158,38 +161,20 @@ namespace MS.Dbg
             }
         }
 
-        internal static DbgUdtTypeInfo GetHeapSegmentType(DbgEngDebugger debugger) => GetTypeNamed(debugger, "ntdll!_HEAP_SEGMENT");
+        internal static DbgUdtTypeInfo GetHeapSegmentType(DbgEngDebugger debugger) => GetTypeNamed(debugger, "_HEAP_SEGMENT");
 
         internal static DbgUdtTypeInfo GetTypeNamed(DbgEngDebugger debugger, string name)
         {
-
-            var si = DbgHelp.EnumTypesByName(debugger.DebuggerInterface,
-                0,
-                name,
-                System.Threading.CancellationToken.None).FirstOrDefault();
-            if (null == si)
-            {
-                throw new DbgProviderException($"Can't find type {name}. No symbols?",
-                    "NoHeapType",
-                    System.Management.Automation.ErrorCategory.ObjectNotFound);
-            }
-
-            var type = (DbgUdtTypeInfo)DbgTypeInfo.GetNamedTypeInfo(debugger,
-                si.ModBase,
-                si.TypeIndex,
-                si.Tag,
-                debugger.GetCurrentTarget());
-            return type;
+            return (DbgUdtTypeInfo)debugger.GetModuleTypeByName( debugger.GetNtdllModuleNative(), name );
         }
 
         internal static dynamic GetHeap(ulong heapBase, DbgEngDebugger debugger)
         {
-            var type = GetTypeNamed(debugger, "ntdll!_HEAP");
-            dynamic heap = new DbgSimpleSymbol(debugger,
-                "Heap",
-                type,
-                heapBase).Value;
-            return heap;
+            return debugger._CreateNtdllSymbolForAddress( false, 
+                                                          heapBase, 
+                                                          "_HEAP", 
+                                                          $"Heap {heapBase:X}", 
+                                                          CancellationToken.None ).Value;
         }
 
         public virtual ColorString ToColorString()
@@ -264,7 +249,7 @@ namespace MS.Dbg
                 dynamic segment = debugger.GetValueForAddressAndType(segmentBase, segmenttype);
                 DbgSymbol ucrListHeadSymbol = segment.UCRSegmentList.DbgGetOperativeSymbol();
                 var ucrListHead = ucrListHeadSymbol.Address;
-                var ucrType = GetTypeNamed(debugger, "ntdll!_HEAP_UCR_DESCRIPTOR");
+                var ucrType = GetTypeNamed(debugger, "_HEAP_UCR_DESCRIPTOR");
 
                 ulong heapHeaderOffset = heap.Encoding.DbgGetOperativeSymbol().Type.Members["AgregateCode"].Offset;
                 var ucrEntries = new HashSet<ulong>(debugger.EnumerateLIST_ENTRY_raw(ucrListHead, (int)ucrListHeadSymbol.Type.Size));
@@ -315,8 +300,7 @@ namespace MS.Dbg
             cs.AppendLine();
             cs.Append("Heap entry body ");
             cs.Append(DbgProvider.FormatAddress(Address, Debugger.TargetIs32Bit, true, true, ConsoleColor.DarkCyan));
-            cs.Append(" size ");
-            cs.AppendPushPopFg(ConsoleColor.DarkGreen, $"0x{PieceSize:X} ");
+            cs.Append($" size 0x{PieceSize:X,DarkGreen}");
             if (IsFree)
             {
                 cs.AppendPushPopFgBg(ConsoleColor.Black, ConsoleColor.Gray, "Free");
