@@ -76,7 +76,7 @@ namespace MS.Dbg.Commands
             base.ProcessRecord();
 
 
-            foreach (var result in Debugger.StreamFromDbgEngThread<DbgMemory>(CancellationToken.None, DoSearch))
+            foreach (var result in Debugger.StreamFromDbgEngThread<DbgMemory>(CancelTS.Token, DoSearch))
             {
                 WriteObject(result);
             }
@@ -108,7 +108,7 @@ namespace MS.Dbg.Commands
             var curPage = startPage;
 
             Span<byte> bytes = stackalloc byte[4096];
-            while (curPage < endAddress && Debugger.TryQueryVirtual(curPage, out var info) == 0)
+            while (curPage < endAddress && Debugger.TryQueryVirtual(curPage, out var info) == 0 && !ct.IsCancellationRequested)
             {
                 var regionEnd = info.BaseAddress + info.RegionSize;
                 curPage = regionEnd;
@@ -146,8 +146,7 @@ namespace MS.Dbg.Commands
                     int byteIdx = i * sizeof(T);
                     ulong address = page + (ulong) byteIdx;
                     var valueBytes = bytes.Slice(byteIdx, sizeof(T)).ToArray();
-                    var result = new DbgMemory(address, valueBytes, Debugger);
-                    result.DefaultDisplayFormat = DbgMemoryDisplayFormat.DWordsWithAscii;
+                    var result = new DbgMemory( address, valueBytes, Debugger ) { DefaultDisplayFormat = DbgMemoryDisplayFormat.DWordsWithAscii };
                     yield(result);
                 }
             }

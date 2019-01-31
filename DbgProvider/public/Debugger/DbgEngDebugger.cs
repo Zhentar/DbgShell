@@ -2334,8 +2334,8 @@ namespace MS.Dbg
             byte[] tmpMem = null;
             var retval = ExecuteOnDbgEngThread( () =>
                 {
-                    int hr = m_debugDataSpaces.ReadVirtual( address, lengthDesired, out byte[] raw );
-                    return _TryCheckMemoryReadHr( hr ) && (raw.Length == lengthDesired || !failIfReadSmaller);
+                    int hr = m_debugDataSpaces.ReadVirtual( address, lengthDesired, out tmpMem );
+                    return _TryCheckMemoryReadHr( hr ) && (tmpMem.Length == lengthDesired || !failIfReadSmaller);
                 } );
             mem = tmpMem;
             return retval;

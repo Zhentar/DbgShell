@@ -136,7 +136,7 @@ namespace MS.Dbg
 
         public static IEnumerable<ulong> AllHeaps(DbgEngDebugger debugger)
         {
-            dynamic teb = debugger.GetCurrentThreadTebNative( CancellationToken.None ).Value;
+            dynamic teb = debugger.GetCurrentThreadTebEffective( CancellationToken.None ).Value;
             dynamic peb = teb.ProcessEnvironmentBlock.DbgGetPointee();
             uint numberOfHeaps = peb.NumberOfHeaps.ToUint32(null);
             return debugger.ReadMemPointers((ulong)peb.ProcessHeaps.DbgGetPointer(), numberOfHeaps);
@@ -170,8 +170,7 @@ namespace MS.Dbg
 
         internal static dynamic GetHeap(ulong heapBase, DbgEngDebugger debugger)
         {
-            return debugger._CreateNtdllSymbolForAddress( false, 
-                                                          heapBase, 
+            return debugger._CreateNtdllSymbolForAddress( heapBase, 
                                                           "_HEAP", 
                                                           $"Heap {heapBase:X}", 
                                                           CancellationToken.None ).Value;
