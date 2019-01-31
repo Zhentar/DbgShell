@@ -18,7 +18,7 @@ Register-AltTypeFormatEntries {
     New-AltTypeFormatEntry -TypeName 'MS.Dbg.DbgSymbol' {
         New-AltTableViewDefinition -ShowIndex {
             New-AltColumns {
-                New-AltScriptColumn -Label 'Name' -Width 25 -Alignment Left -Script {
+                New-AltScriptColumn -Label 'Name' -Alignment Left -Script {
                     if( $_.get_IsValueUnavailable() )
                     {
                         # This 'dims' symbol names whose values aren't available.

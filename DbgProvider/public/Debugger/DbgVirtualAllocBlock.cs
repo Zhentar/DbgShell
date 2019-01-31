@@ -163,9 +163,9 @@ namespace MS.Dbg
 
         internal static DbgUdtTypeInfo GetHeapSegmentType(DbgEngDebugger debugger) => GetTypeNamed(debugger, "_HEAP_SEGMENT");
 
-        internal static DbgUdtTypeInfo GetTypeNamed(DbgEngDebugger debugger, string name)
+        internal static DbgUdtTypeInfo GetTypeNamed( DbgEngDebugger debugger, string name )
         {
-            return (DbgUdtTypeInfo)debugger.GetModuleTypeByName( debugger.GetNtdllModuleNative(), name );
+            return (DbgUdtTypeInfo) debugger.GetModuleTypeByName( debugger.GetNtdllModuleEffective(), name );
         }
 
         internal static dynamic GetHeap(ulong heapBase, DbgEngDebugger debugger)

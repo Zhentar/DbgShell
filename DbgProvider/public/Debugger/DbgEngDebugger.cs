@@ -3529,6 +3529,7 @@ namespace MS.Dbg
         {
             return ExecuteOnDbgEngThread( () => DbgHelp.GetDiaSession(DebuggerInterface, moduleBase));
         }
+
         public IEnumerable< DbgSymbol > FindSymbol_Search( string pattern )
         {
             return FindSymbol_Search( pattern, GlobalSymbolCategory.All );
