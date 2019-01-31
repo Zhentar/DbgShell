@@ -416,7 +416,7 @@ namespace MS.Dbg
 
         public static string FormatErrorCode( int i )
         {
-            return FormatErrorCode( unchecked( (uint) i ) );
+            return FormatErrorCode( unchecked( (uint) i ) ) + " - " + Marshal.GetExceptionForHR( i ).Message;
         }
 
         public static string FormatErrorCode( uint ui )

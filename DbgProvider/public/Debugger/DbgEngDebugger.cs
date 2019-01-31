@@ -3525,9 +3525,10 @@ namespace MS.Dbg
             return pattern;
         }
 
-        public IDiaSession GetDiaSession(ulong moduleBase)
+        public IDiaSession GetDiaSession(DbgModuleInfo module)
         {
-            return ExecuteOnDbgEngThread( () => DbgHelp.GetDiaSession(DebuggerInterface, moduleBase));
+            _EnsureSymbolsLoaded( module, default );
+            return ExecuteOnDbgEngThread( () => DbgHelp.GetDiaSession(DebuggerInterface, module.BaseAddress));
         }
 
         public IEnumerable< DbgSymbol > FindSymbol_Search( string pattern )

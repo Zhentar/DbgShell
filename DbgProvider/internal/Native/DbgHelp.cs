@@ -958,11 +958,11 @@ namespace MS.Dbg
         public static IDiaSession GetDiaSession(WDebugClient debugClient, ulong modBase)
         {
             IntPtr hProcess = _GetHProcForDebugClient(debugClient);
-            if (NativeMethods.SymGetDiaSession(hProcess, modBase, out var session))
+            if( !NativeMethods.SymGetDiaSession( hProcess, modBase, out var session ) )
             {
-                return session;
+                throw new DbgEngException( Marshal.GetLastWin32Error() );
             }
-            return null;
+            return session;
         }
 
         private static unsafe void GetBaseTypeInfo_naked( WDebugClient debugClient,
