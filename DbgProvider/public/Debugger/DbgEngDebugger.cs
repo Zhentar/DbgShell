@@ -3531,6 +3531,12 @@ namespace MS.Dbg
             return ExecuteOnDbgEngThread( () => DbgHelp.GetDiaSession(DebuggerInterface, module.BaseAddress));
         }
 
+        public WDbgHelpDia GetDiaSession2( DbgModuleInfo module )
+        {
+            _EnsureSymbolsLoaded( module, default );
+            return ExecuteOnDbgEngThread( () => DbgHelp.GetDiaSession2( DebuggerInterface, module.BaseAddress ) );
+        }
+
         public IEnumerable< DbgSymbol > FindSymbol_Search( string pattern )
         {
             return FindSymbol_Search( pattern, GlobalSymbolCategory.All );

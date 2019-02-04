@@ -80,6 +80,9 @@
       <HintPath>..\dia2lib.dll</HintPath>
       <EmbedInteropTypes>True</EmbedInteropTypes>
     </Reference>
+    <Reference Include="DotNet.Glob, Version=2.1.1.0, Culture=neutral, PublicKeyToken=b68cc888b4f632d1, processorArchitecture=MSIL">
+      <HintPath>..\packages\DotNet.Glob.2.1.1\lib\net46\DotNet.Glob.dll</HintPath>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Buffers, Version=4.0.2.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
       <HintPath>..\packages\System.Buffers.4.4.0\lib\netstandard1.1\System.Buffers.dll</HintPath>

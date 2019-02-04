@@ -965,6 +965,15 @@ namespace MS.Dbg
             return session;
         }
 
+        public static WDbgHelpDia GetDiaSession2( WDebugClient debugClient, ulong modBase )
+        {
+            if( !WDbgHelpDia.GetDiaSession( _GetHProcForDebugClient( debugClient ), modBase, out var session ))
+            {
+                throw new DbgEngException( Marshal.GetLastWin32Error() );
+            }
+            return session;
+        }
+
         private static unsafe void GetBaseTypeInfo_naked( WDebugClient debugClient,
                                                           ulong modBase,
                                                           uint typeId,
