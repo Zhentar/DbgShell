@@ -92,7 +92,7 @@
     <LibraryPath>$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LibraryPath>$(LibraryPath)</LibraryPath>
+    <LibraryPath>$(VSInstallDir)\DIA SDK\lib\amd64;$(LibraryPath)</LibraryPath>
     <!-- <OutDir>$(SolutionDir)bin\$(Configuration)\$(PlatformTarget)\Debugger\</OutDir> -->
     <LinkIncremental>true</LinkIncremental>
     <IncludePath>$(VSInstallDir)\DIA SDK\include;$(IncludePath)</IncludePath>
@@ -104,6 +104,7 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
     <IncludePath>$(VSInstallDir)\DIA SDK\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(VSInstallDir)\DIA SDK\lib\amd64;$(LibraryPath)</LibraryPath>
     <!-- <OutDir>$(SolutionDir)bin\$(Configuration)\$(PlatformTarget)\Debugger\</OutDir> -->
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">

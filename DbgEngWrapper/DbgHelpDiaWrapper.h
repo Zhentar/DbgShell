@@ -28,12 +28,14 @@ namespace DbgEngWrapper
     {
     private:
         ::IDiaSession* m_diaSession;
+        void (*freeString)(BSTR);
 
-        WDbgHelpDia(::IDiaSession* pSession)
+        WDbgHelpDia(::IDiaSession* pSession, void(*freeStringFunction)(BSTR))
         {
             if (!pSession)
                 throw gcnew ArgumentNullException("pNative");
 
+            freeString = freeStringFunction;
             m_diaSession = pSession;
         }
 
@@ -56,6 +58,7 @@ namespace DbgEngWrapper
         }
 
         static bool GetDiaSession([In]IntPtr hProcess, [In]ULONG64 BaseAddress, [Out] WDbgHelpDia^% dia);
+        static HRESULT CreateDiaSession(String^ pdbFilename, ULONG64 BaseAddress, [Out] WDbgHelpDia^% dia);
 
         delegate void SymbolCallback(String^ name, UInt64 address);
 

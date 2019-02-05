@@ -1,8 +1,12 @@
 #include "stdafx.h"
 
 #include "DbgHelpUndocumented.h"
+#include <diacreate.h>
 #include "DbgHelpDiaWrapper.h"
+#pragma comment(lib, "advapi32")
+#pragma comment(lib, "diaguids")
 #pragma comment(lib, "dbghelp")
+
 
 namespace DbgEngWrapper
 {
@@ -13,10 +17,33 @@ bool WDbgHelpDia::GetDiaSession([In]IntPtr hProcess, [In]ULONG64 BaseAddress, [O
     BOOL result = SymGetDiaSession((HANDLE)hProcess, BaseAddress, &session);
     if (session)
     {
-        dia = gcnew WDbgHelpDia(session);
+        dia = gcnew WDbgHelpDia(session, (void(*)(BSTR))&SymFreeDiaString);
     }
     return result != 0;
 };
+
+HRESULT WDbgHelpDia::CreateDiaSession(String^ pdbFilename, ULONG64 BaseAddress, [Out] WDbgHelpDia^% dia)
+{
+    marshal_context mc;
+    IDiaDataSource  *diaDataSource = nullptr;
+    IDiaSession  *diaSession = nullptr;
+    int hr = ::NoRegCoCreate(L"msdia140.dll", __uuidof(DiaSource), __uuidof(IDiaDataSource),(void **)&diaDataSource);
+    if (hr == 0 && diaDataSource != nullptr)
+    {
+        hr = diaDataSource->loadDataFromPdb(mc.marshal_as<const wchar_t*>(pdbFilename));
+        if (hr == 0)
+        {
+            hr = diaDataSource->openSession(&diaSession);
+            if (hr == 0 && diaSession != nullptr)
+            {
+                diaSession->put_loadAddress(BaseAddress);
+                dia = gcnew WDbgHelpDia(diaSession, &SysFreeString);
+            }
+        }
+    }
+    return hr;
+};
+
 
 int WDbgHelpDia::SearchSymbols(String^ searchMask, SymTag tag, DiaSearchOptions diaSearchOptions, SymbolCallback^ resultCallback)
 {
@@ -39,14 +66,14 @@ int WDbgHelpDia::SearchSymbols(String^ searchMask, SymTag tag, DiaSearchOptions 
             IDiaSymbol* childSymbol = nullptr;
             while ((hr = enumSymbols->Next(1, &childSymbol, &fetchedSymbols)) == 0 && fetchedSymbols)
             {
-                wchar_t* nameUnmanaged = nullptr;
+                BSTR nameUnmanaged = nullptr;
                 DWORD64 address = 0;
-                childSymbol->get_undecoratedName(&nameUnmanaged);
+                childSymbol->get_undecoratedNameEx(0x1000, &nameUnmanaged);
                 childSymbol->get_virtualAddress(&address);
                 String^ name = gcnew String(nameUnmanaged);
                 resultCallback(name, address);
                 childSymbol->Release();
-                SymFreeDiaString((unsigned short*)nameUnmanaged);
+                freeString(nameUnmanaged);
             }
 
 
@@ -85,27 +112,27 @@ int WDbgHelpDia::SearchSymbols(DotNet::Globbing::Glob^ searchMask, SymTag tag, D
                 String^ name = nullptr; 
                 if (isMangledSearch)
                 {
-                    wchar_t* nameUnmanaged = nullptr;
+                    BSTR nameUnmanaged = nullptr;
                     childSymbol->get_name(&nameUnmanaged);
                     name = gcnew String(nameUnmanaged);
-                    SymFreeDiaString((unsigned short*)nameUnmanaged);
+                    freeString(nameUnmanaged);
                 }
                 else
                 {
-                    wchar_t* nameUnmanaged = nullptr;
+                    BSTR nameUnmanaged = nullptr;
                     childSymbol->get_undecoratedNameEx(0x1000, &nameUnmanaged);
                     name = gcnew String(nameUnmanaged);
-                    SymFreeDiaString((unsigned short*)nameUnmanaged);
+                    freeString(nameUnmanaged);
                 }
                 
                 if (searchMask->IsMatch(name))
                 {
                     if (isMangledSearch)
                     {
-                        wchar_t* nameUnmanaged = nullptr;
+                        BSTR nameUnmanaged = nullptr;
                         childSymbol->get_undecoratedNameEx(0x1000, &nameUnmanaged);
                         name = gcnew String(nameUnmanaged);
-                        SymFreeDiaString((unsigned short*)nameUnmanaged);
+                        freeString(nameUnmanaged);
                     }
                     childSymbol->get_virtualAddress(&address);
                     resultCallback(name, address);
