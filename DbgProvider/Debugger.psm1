@@ -4322,6 +4322,85 @@ function !teb
 
 <#
 .SYNOPSIS
+    For each dump file path, this command mounts the dump file, runs the supplied ScriptBlock, then detaches.
+
+    Example 1: dir C:\temp\dumps\ -File | ForEach-DbgDumpFile { lm ntdll }
+
+    Example 2: ForEach-DbgDumpFile -DumpFile C:\temp\dumps\*.dmp { lm ntdll }
+
+    Note that many properties on DbgShell objects are fetched lazily, so if you capture the output of ForEach-DbgDumpFile, and then try to access such properties afterward, it will blow up, because the dumps backing the objects have already been unloaded. One way to deal with this is to cause the properties to be fetched while the dump is still loaded, e.g.
+
+       $stuff = dir C:\temp\dumps\ -File | ForEach-DbgDumpFile {
+           $thing = lm ntdll
+           $thing | Format-List | Out-Null
+           Write-Output $thing
+       }
+
+    A more explicit way of doing the same thing would be to explicitly fetch the properties you are interested in for exfiltration:
+
+       $stuff = dir C:\temp\dumps\ -File | ForEach-DbgDumpFile {
+           lm ntdll | Select-Object Name, VersionInfo
+       }
+
+    Two special NoteProperties are automatically attached to every object emitted from the ScriptBlock: TargetFriendlyName and DumpPath. This allows you to determine where a given output object came from.
+
+       $stuff = dir C:\temp\dumps\ -File | ForEach-DbgDumpFile {
+           lm ntdll | Select-Object Name, VersionInfo
+       }
+
+       $stuff | Format-Table VersionInfo, TargetFriendlyName, DumpPath
+#>
+function ForEachDbgDumpFile # Named thusly to avoid a warning about a bad verb name
+{
+    [CmdletBinding()]
+    param( [Parameter( Mandatory = $false,
+                       ValueFromPipeline = $true,
+                       ValueFromPipelineByPropertyName = $true )]
+           [Alias( 'PSPath' )] # Allows piping in output of "dir"
+           [string] $DumpFilePath,
+
+           [Parameter( Mandatory = $true, Position = 0 )]
+           [ScriptBlock] $ScriptBlock
+         )
+
+    process
+    {
+        try
+        {
+            foreach( $path in (Resolve-Path $DumpFilePath) )
+            {
+                [bool] $mountSucceeded = $false
+                try
+                {
+                    # Note that we suppress/ignore all the output you normally get when you load a
+                    # dump file.
+                    Mount-DbgDumpFile $path.ProviderPath | Out-Null
+
+                    $mountSucceeded = $true
+
+                    $tfn = $debugger.GetCurrentTarget().TargetFriendlyName
+
+                    & $ScriptBlock | `
+                        Add-Member -NotePropertyName 'TargetFriendlyName' -NotePropertyValue $tfn -PassThru | `
+                        Add-Member -NotePropertyName 'DumpPath' -NotePropertyValue $path.ProviderPath -PassThru
+                }
+                finally
+                {
+                    if( $mountSucceeded )
+                    {
+                        .detach
+                    }
+                }
+            }
+        }
+        finally { }
+    }
+} # end ForEachDbgDumpFile
+Set-Alias ForEach-DbgDumpFile ForEachDbgDumpFile
+
+
+<#
+.SYNOPSIS
     Opens the current dump in windbg. TBD: support for live targets, remotes
 #>
 function Open-InWindbg
@@ -4366,7 +4445,7 @@ function Open-InWindbg
 } # end function Open-InWindbg
 
 
-function Resolve-Error
+function Show-Error
 {
     [CmdletBinding()]
     param( [Parameter( Mandatory = $false, Position = 0, ValueFromPipeline = $true )]
@@ -4413,12 +4492,12 @@ function Resolve-Error
             $e_var = Get-Variable 'e' -ErrorAction Ignore
             if( ($null -eq $e_var) -or
                 (($e_var.Value -ne $null) -and
-                 (0 -ne $e_var.Value.PSObject.Properties.Match( 'AddedByResolveError').Count)))
+                 (0 -ne $e_var.Value.PSObject.Properties.Match( 'AddedByShowError').Count)))
             {
                 $global:e = $ErrorRecord
                 Add-Member -InputObject $global:e `
                            -MemberType 'NoteProperty' `
-                           -Name 'AddedByResolveError' `
+                           -Name 'AddedByShowError' `
                            -Value $true `
                            -Force # overwrite if we're re-doing one
             }
@@ -4435,7 +4514,7 @@ function Resolve-Error
         finally { }
     }
 }
-Set-Alias rver Resolve-Error
+Set-Alias ser Show-Error
 
 
 <#

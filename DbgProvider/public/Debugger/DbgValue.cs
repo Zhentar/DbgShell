@@ -103,6 +103,15 @@ namespace MS.Dbg
         internal PSObject WrappingPSObject { get; private set; }
 
 
+        private readonly ulong m_execStatusCookie;
+
+        /// <summary>
+        ///     The value of the debugger's ExecStatusCookie at the time the DbgValue
+        ///     object was created.
+        /// </summary>
+        public ulong DbgGetExecStatusCookie() { return m_execStatusCookie; }
+
+
         protected DbgValue( DbgSymbol symbol )
             : this( new List< SymbolHistoryRecord >() { new SymbolHistoryRecord( symbol ) } )
         {
@@ -118,6 +127,8 @@ namespace MS.Dbg
 
             // Note that we copy the list!
             m_symbolHistory = new List< SymbolHistoryRecord >( symbolHistory );
+
+            m_execStatusCookie = Symbol.Debugger.ExecStatusCookie;
 
             WrappingPSObject = new PSObject( this );
 
@@ -1156,6 +1167,14 @@ namespace MS.Dbg
                                        "MS.Dbg.DbgSymbol",
                                        del );
             pso.Methods.Add( pmi );
+
+
+            ulong cookie = symbol.Debugger.ExecStatusCookie;
+            del = () => { return cookie; };
+            pmi = new PSDbgMethodInfo( "DbgGetExecStatusCookie",
+                                       "System.UInt64",
+                                       del );
+            pso.Methods.Add( pmi );
         } // end _AddDbgGetSymbolMethods()
 
 
@@ -1336,15 +1355,9 @@ namespace MS.Dbg
                     key = Util.Sprintf( "{0}_{1}", staticMember.Name, i );
                 }
                 m_memberNames.Add( key );
-                // TODO: get rid of useless symbol.children? or somehow reconcile with the
-                // fact that we are creating new DbgSimpleSymbol objects here...
-                // maybe an indexer, from datamemberinfobase to symbol?
+
                 WrappingPSObject.Properties.Add( new PSSymFieldInfo( key,
-                                                                     new DbgSimpleSymbol( Symbol.Debugger,
-                                                                                          staticMember.Name,
-                                                                                          staticMember.DataType,
-                                                                                          staticMember.Address,
-                                                                                          OperativeSymbol ),
+                                                                     staticMember.GetSymbol(),
                                                                      staticMember ) );
             }
 
@@ -1969,6 +1982,9 @@ namespace MS.Dbg
             //
             //    (pThing + 1)  ????                 Thing*    0x18+sizeof(Thing) (DbgPointerValue)
             //
+            // If we really wanted to do this, a possible way to do it would be to say
+            // that the pointer's value is in a [fake] register. Or pretend it's const
+            // data.
 
             DbgNamedTypeInfo pointeeType = ((DbgPointerTypeInfo) basePointer.OperativeSymbol.Type).PointeeType;
             Util.Assert( 0 != pointeeType.Size );

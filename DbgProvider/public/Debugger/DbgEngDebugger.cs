@@ -2158,24 +2158,36 @@ namespace MS.Dbg
                                                  token );
         } // end GetCurrentThreadTeb32()
 
-        internal DbgSymbol _CreateNtdllSymbolForAddress( ulong address, string type, string symbolName, CancellationToken token = default )
+        internal DbgSymbol _CreateNtdllSymbolForAddress( ulong address,
+                                                         string type,
+                                                         string symbolName,
+                                                         CancellationToken token = default )
         {
             return Debugger.ExecuteOnDbgEngThread( () =>
                 {
+                    Exception makeException( DbgProviderException inner = null )
+                    {
+                        throw new DbgProviderException( $"Could not create symbol for {type}. Are you missing the PDB for ntdll?",
+                                                        "NoTebSymbol",
+                                                        System.Management.Automation.ErrorCategory.ObjectNotFound,
+                                                        inner,
+                                                        this );
+                    }
+
                     try
                     {
                         var module = GetNtdllModuleEffective();
                         var tebType = GetModuleTypeByName( module, type, token );
+                        if( null == tebType )
+                        {
+                            throw makeException();
+                        }
                         var tebSym = CreateSymbolForAddressAndType( address, tebType, symbolName );
                         return tebSym;
                     }
                     catch( DbgProviderException dpe )
                     {
-                        throw new DbgProviderException( $"Could not create symbol for {type}. Are you missing the PDB for ntdll?",
-                                                        "NoTebSymbol",
-                                                        System.Management.Automation.ErrorCategory.ObjectNotFound,
-                                                        dpe,
-                                                        this );
+                        throw makeException( dpe );
                     }
                 } );
         } // end _CreateNtdllSymbolForAddress
@@ -3678,6 +3690,10 @@ namespace MS.Dbg
             return GetModuleTypeByName( mod, bareSym, cancelToken );
         } // end GetSingleTypeByName()
 
+        /// <summary>
+        ///    Gets type info for a given module and typename. Returns null if not found
+        ///    (bad name, or no symbols, for example).
+        /// </summary>
         public DbgNamedTypeInfo GetModuleTypeByName( DbgModuleInfo module,
                                                      string typeName,
                                                      CancellationToken cancelToken = default )
@@ -6436,7 +6452,7 @@ namespace MS.Dbg
                 {
                     // TODO: write warning
                     // Trim off ".Flink".
-                    listEntryMemberPath.Substring( 0, listEntryMemberPath.Length - dotFlink.Length );
+                    listEntryMemberPath = listEntryMemberPath.Substring( 0, listEntryMemberPath.Length - dotFlink.Length );
                 }
                 listEntryOffset = (int) entryType.FindMemberOffset( listEntryMemberPath );
             }
@@ -6704,5 +6720,12 @@ namespace MS.Dbg
             fullName = tmpFullName;
             abbrevName = tmpAbbrevName;
         }
+
+
+        /// <summary>
+        ///    A value that is updated whenever dbgeng's execution status changes.
+        /// </summary>
+        public ulong ExecStatusCookie => m_internalEventCallbacks.ExecStatusCookie;
+
     } // end class DbgEngDebugger
 }

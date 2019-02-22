@@ -1573,11 +1573,12 @@ namespace MS.Dbg
             IMAGEHLP_SYMBOL_TYPE_INFO.TI_GET_BITPOSITION,          // 0x040  only valid for bitfields
             IMAGEHLP_SYMBOL_TYPE_INFO.TI_GET_LENGTH,               // 0x080  only valid for bitfields
             IMAGEHLP_SYMBOL_TYPE_INFO.TI_GET_ADDRESS,              // 0x100
-            IMAGEHLP_SYMBOL_TYPE_INFO.TI_GET_SYMNAME,              // 0x200
+            IMAGEHLP_SYMBOL_TYPE_INFO.TI_GET_VALUE,                // 0x200  only valid for e.g. constant static members
+            IMAGEHLP_SYMBOL_TYPE_INFO.TI_GET_SYMNAME,              // 0x400
         };
 
         [StructLayout( LayoutKind.Sequential )]
-        internal struct DataInfoRequest
+        internal unsafe struct DataInfoRequest
         {
             public SymTag SymTag;
             public DataKind DataKind;
@@ -1585,9 +1586,10 @@ namespace MS.Dbg
             public uint ClassParentId;
             public uint Offset;
             public uint AddressOffset;
-            public uint BitPosition;    // only valid for bitfields
-            public ulong Length;        // only valid for bitfields
+            public uint BitPosition;       // only valid for bitfields
+            public ulong Length;           // only valid for bitfields
             public ulong Address;
+            public fixed byte Value[ 24 ]; // only valid for e.g. constant static members
             public IntPtr SymName;
         }
 
@@ -1602,6 +1604,7 @@ namespace MS.Dbg
             (uint) 4,  // BitPosition
             (uint) 8,  // Length
             (uint) 8,  // Address
+            (uint) 24, // Value (VARIANT)
             (uint) IntPtr.Size, // SymName
         };
 
@@ -1631,6 +1634,9 @@ namespace MS.Dbg
 
             DataInfoRequest dir;
 
+            IntPtr pvtIntPtr = new IntPtr( dir.Value );
+            Marshal.GetNativeVariantForObject( null, pvtIntPtr ); // I'm hoping this gets me something like VT_EMPTY
+
             // Since we're only getting info about one id, we use the alternate mode of
             // operation where the offsets are the actual addresses we want the info
             // stored at.
@@ -1645,6 +1651,7 @@ namespace MS.Dbg
                 (IntPtr) (&dir.BitPosition),
                 (IntPtr) (&dir.Length),
                 (IntPtr) (&dir.Address),
+                (IntPtr) (dir.Value), // <-- already a pointer!
                 (IntPtr) (&dir.SymName),
             };
 
@@ -1691,12 +1698,16 @@ namespace MS.Dbg
                     //Util.Assert( 0x337 == (reqsValid & 0x337) ); // we should always be able to get these items for a Data, no matter the kind
                     //Util.Assert( 0x21f == (reqsValid & 0x21f) ); // we should always be able to get these items for a Data, no matter the kind
                     //Util.Assert( 0x20f == (reqsValid & 0x20f) ); // we should always be able to get these items for a Data, no matter the kind
-                    Util.Assert( 0x207 == (reqsValid & 0x207) ); // we should always be able to get these items for a Data, no matter the kind
+                    Util.Assert( 0x407 == (reqsValid & 0x407) ); // we should always be able to get these items for a Data, no matter the kind
                     // TODO: Rewrite the assert to check for sets; that is, there are certain sets of
                     // properties that should be available together.
                     // If we couldn't get the other properties, their default values of 0
                     // will be fine.
-                    return new RawDataInfo( dir );
+
+                    // DbgHelp likes to initialize the Value VARIANT with an int 0 (as
+                    // opposed to an empty VARIANT), so we need to use reqsValid to
+                    // determine if we should pay attention to the Value or not.
+                    return new RawDataInfo( dir, valueFieldIsValid: 0 != (reqsValid & 0x200) );
                 }
                 finally
                 {
@@ -2968,6 +2979,7 @@ namespace MS.Dbg
                              IMAGEHLP_SYMBOL_TYPE_INFO.TI_GET_VALUE,
                              pvt );
 
+            // TODO: Uh-oh, these VARIANT-related APIs are obsolete...
             value = Marshal.GetObjectForNativeVariant( pvtIntPtr );
         } // end GetConstantNameAndValue()
 
@@ -4254,9 +4266,10 @@ namespace MS.Dbg
         public readonly uint AddressOffset;
         public readonly ulong Address;
         public readonly uint BitfieldLength;  // only valid for bitfields
-        public readonly uint BitPosition;      // only valid for bitfields (if BitfieldLength is non-zero)
+        public readonly uint BitPosition;     // only valid for bitfields (if BitfieldLength is non-zero)
+        public readonly object Value;         // only valid for e.g. static data members
 
-        internal RawDataInfo( DbgHelp.DataInfoRequest dir )
+        internal unsafe RawDataInfo( DbgHelp.DataInfoRequest dir, bool valueFieldIsValid )
         {
             SymName        = Marshal.PtrToStringUni( dir.SymName );
             DataKind       = dir.DataKind;
@@ -4267,6 +4280,11 @@ namespace MS.Dbg
             Address        = dir.Address;
             BitfieldLength = (uint) dir.Length;
             BitPosition    = dir.BitPosition;
+
+            if( valueFieldIsValid )
+            {
+                Value      = Marshal.GetObjectForNativeVariant( new IntPtr( dir.Value ) );
+            }
         } // end constructor
     } // end class RawDataInfo
 
