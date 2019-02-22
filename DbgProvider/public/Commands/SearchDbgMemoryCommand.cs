@@ -49,6 +49,16 @@ namespace MS.Dbg.Commands
             QWord
         }
 
+        [Flags]
+        public enum MemType
+        {
+            Default = 0,
+            Private = 1,
+            Image = 2,
+            Mapped = 4,
+            All = Private | Image | Mapped
+        }
+
         [Parameter(Mandatory = true, Position = 0, ValueFromPipeline = true)]
         [AggressiveAddressTransformation] //Not necessarily an address, but it is often enough that the semantics are useful
         public ulong SearchValue { get; set; }
@@ -62,14 +72,20 @@ namespace MS.Dbg.Commands
 
         [Parameter(Mandatory = false)]
         [AddressTransformation]
-        public ulong FromAddress { get; set; }
+        public ulong StartAddress { get; set; }
 
         [Parameter(Mandatory = false)]
         [RangeTransformation]
-        public ulong? SearchRangeInBytes { get; set; }
+        public ulong EndAddress { get; set; }
 
-        [Parameter(Mandatory = false)]
-        public bool WritableOnly { get; set; }
+        [Parameter( Mandatory = false )]
+        public SwitchParameter IncludeReadOnly { get; set; }
+
+        [Parameter( Mandatory = false )]
+        public SwitchParameter ExcludeExectuable { get; set; }
+
+        [ Parameter( Mandatory = false ) ]
+        public MemType MemoryType { get; set; } = MemType.All;
 
         protected override void ProcessRecord()
         {
@@ -83,26 +99,23 @@ namespace MS.Dbg.Commands
             
         }
 
+        private const PAGE WRITABLE = PAGE.READWRITE | PAGE.WRITECOPY | PAGE.EXECUTE_READWRITE | PAGE.EXECUTE_WRITECOPY;
+
         private void DoSearch(CancellationToken ct, Action<DbgMemory> yield)
         {
-            var endAddress = (FromAddress + SearchRangeInBytes) ?? ulong.MaxValue;
-
             var targetPointerType = Debugger.TargetIs32Bit ? SearchSize.DWord : SearchSize.QWord;
-
-            
-            
-
             var searchType = SearchType == SearchSize.Default ? targetPointerType : SearchType;
 
             var searchMask = SearchMask;
             if(searchMask == 0) { searchMask = ulong.MaxValue; }
             var searchValue = SearchValue & searchMask;
 
-            var startAddress = FromAddress & 0xFFFF_FFFF_FFFF_FFFC;
+            var startAddress = StartAddress & 0xFFFF_FFFF_FFFF_FFFC;
             if (searchType == SearchSize.QWord)
             {
                 startAddress = startAddress & 0xFFFF_FFFF_FFFF_FFF8;
             }
+            var endAddress = EndAddress > StartAddress ? EndAddress : ulong.MaxValue;
 
             var startPage = startAddress & 0xFFFF_FFFF_FFFF_F000;
             var curPage = startPage;
@@ -112,7 +125,12 @@ namespace MS.Dbg.Commands
             {
                 var regionEnd = info.BaseAddress + info.RegionSize;
                 curPage = regionEnd;
-                if ((info.State & MEM.COMMIT) != 0) //TODO: other filtering
+                if( !IncludeReadOnly && (info.Protect & WRITABLE) == 0 )
+                {
+                    continue;
+                }
+
+                if ((info.State & MEM.COMMIT) != 0 && CheckMemType(info.Type, MemoryType))
                 {
                     for (var page = info.BaseAddress; page < Math.Min(endAddress, regionEnd); page += 4096)
                     {
@@ -130,6 +148,22 @@ namespace MS.Dbg.Commands
                         }
                     }
                 }
+            }
+        }
+
+        private static bool CheckMemType( MEM actualType, MemType flags )
+        {
+            switch( actualType )
+            {
+                case MEM.PRIVATE:
+                    return (flags & MemType.Private) != 0;
+                case MEM.IMAGE:
+                    return (flags & MemType.Image) != 0;
+                case MEM.MAPPED:
+                    return (flags & MemType.Mapped) != 0;
+                default:
+                    if( flags == MemType.All ) { return true; }
+                    throw new InvalidOperationException( "Unknown/Bogus Memory Type!" );
             }
         }
 
