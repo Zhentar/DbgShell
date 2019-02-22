@@ -7,6 +7,8 @@
 #pragma comment(lib, "diaguids")
 #pragma comment(lib, "dbghelp")
 
+class __declspec(uuid("91904831-49CA-4766-B95C-25397E2DD6DC")) DiaSourceAlt;
+
 
 namespace DbgEngWrapper
 {
@@ -22,12 +24,16 @@ bool WDbgHelpDia::GetDiaSession([In]IntPtr hProcess, [In]ULONG64 BaseAddress, [O
     return result != 0;
 };
 
-HRESULT WDbgHelpDia::CreateDiaSession(String^ pdbFilename, ULONG64 BaseAddress, [Out] WDbgHelpDia^% dia)
+HRESULT WDbgHelpDia::CreateDiaSession(String^ pdbFilename, ULONG64 BaseAddress, bool useLocalAlloc, [Out] WDbgHelpDia^% dia)
 {
     marshal_context mc;
     IDiaDataSource  *diaDataSource = nullptr;
     IDiaSession  *diaSession = nullptr;
-    int hr = ::NoRegCoCreate(L"msdia140.dll", __uuidof(DiaSource), __uuidof(IDiaDataSource),(void **)&diaDataSource);
+    int hr = ::NoRegCoCreate(L"msdia140.dll",
+                             useLocalAlloc ? __uuidof(DiaSourceAlt) : __uuidof(DiaSource),
+                             __uuidof(IDiaDataSource),
+                             (void **)&diaDataSource);
+
     if (hr == 0 && diaDataSource != nullptr)
     {
         hr = diaDataSource->loadDataFromPdb(mc.marshal_as<const wchar_t*>(pdbFilename));
@@ -37,7 +43,8 @@ HRESULT WDbgHelpDia::CreateDiaSession(String^ pdbFilename, ULONG64 BaseAddress, 
             if (hr == 0 && diaSession != nullptr)
             {
                 diaSession->put_loadAddress(BaseAddress);
-                dia = gcnew WDbgHelpDia(diaSession, &SysFreeString);
+                //TODO: fix terrible reusing symfree hack
+                dia = gcnew WDbgHelpDia(diaSession, useLocalAlloc ? (void(*)(BSTR))&SymFreeDiaString : &SysFreeString);
             }
         }
     }
