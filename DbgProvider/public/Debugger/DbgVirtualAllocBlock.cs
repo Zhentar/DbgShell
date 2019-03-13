@@ -161,11 +161,19 @@ namespace MS.Dbg
             }
         }
 
+        //TODO: not thread safe. Make sure only accessed from dbgeng thread
+        private static readonly Dictionary<string, DbgUdtTypeInfo> ntdllSymbolCache = new Dictionary<string, DbgUdtTypeInfo>();
+
         internal static DbgUdtTypeInfo GetHeapSegmentType(DbgEngDebugger debugger) => GetTypeNamed(debugger, "_HEAP_SEGMENT");
 
         internal static DbgUdtTypeInfo GetTypeNamed( DbgEngDebugger debugger, string name )
         {
-            return (DbgUdtTypeInfo) debugger.GetModuleTypeByName( debugger.GetNtdllModuleEffective(), name );
+            var ntdll = debugger.GetNtdllModuleEffective();
+            if( !ntdllSymbolCache.TryGetValue( name, out var typeInfo ) || (ntdll.SymbolCookie != typeInfo?.SymbolCookie) )
+            {
+                typeInfo = ntdllSymbolCache[ name ] = (DbgUdtTypeInfo) debugger.GetModuleTypeByName( ntdll, name );
+            }
+            return typeInfo;
         }
 
         internal static dynamic GetHeap(ulong heapBase, DbgEngDebugger debugger)
@@ -229,7 +237,7 @@ namespace MS.Dbg
         [StructLayout(LayoutKind.Explicit)]
         internal struct _HEAP_ENTRY
         {
-            [FieldOffset(0)]public ulong AgregateCode;
+            [FieldOffset(0)]public ulong AgregateCode; //[sic]
             [FieldOffset(0)]public ushort Size;
             [FieldOffset(2)]public byte Flags;
             [FieldOffset(3)]public byte SmallTagIndex;
@@ -243,7 +251,7 @@ namespace MS.Dbg
             return debugger.ExecuteOnDbgEngThread(() =>
             {
                 var heap = GetHeap(heapBase, debugger);
-                ulong encoding = heap.Encoding.AgregateCode.ToUint64(null); //[sic]
+                ulong encoding = heap.Encoding.AgregateCode.ToUint64(null);
                 var segmenttype = GetHeapSegmentType(debugger);
                 dynamic segment = debugger.GetValueForAddressAndType(segmentBase, segmenttype);
                 DbgSymbol ucrListHeadSymbol = segment.UCRSegmentList.DbgGetOperativeSymbol();
@@ -260,7 +268,7 @@ namespace MS.Dbg
                     if (ucrEntries.Contains(entryAddr + 8))
                     {
                         dynamic ucrDescriptor = debugger.GetValueForAddressAndType(entryAddr + 8, ucrType);
-                        var ucrSize = ucrDescriptor.Size;
+                        var ucrSize = ucrDescriptor.Size.ToUint64( null );
                         if(ucrSize == 0) { break; }
                         entryAddr = ucrDescriptor.Address + ucrSize + heapHeaderOffset;
                         continue;
@@ -269,9 +277,7 @@ namespace MS.Dbg
                     ulong nextAddr = entryAddr + entry.Size * 8u;
                     if (addr < nextAddr)
                     {
-                        bool free = (entry.Flags & 0x1) == 0;
-                        var actualSize = entry.Size * 8u - Math.Max(8u, entry.UnusedBytes); //I don't understand why unused is less than 8 sometimes
-                        return new DbgSpecificSubpieceOfAVirtualAllocBlock(entryAddr + 8, free, actualSize);
+                        return SubpieceWithinHeapEntry( addr, entry, entryAddr, debugger );
                     }
 
                     entryAddr = nextAddr + heapHeaderOffset;
@@ -281,25 +287,106 @@ namespace MS.Dbg
             });
         }
 
-        public DbgSpecificSubpieceOfAVirtualAllocBlock(ulong addr, bool free, ulong size) : base(addr)
+        private static DbgSpecificSubpieceOfAVirtualAllocBlock SubpieceWithinHeapEntry( ulong targetAddr, _HEAP_ENTRY entry, ulong entryAddr, DbgEngDebugger debugger )
+        {
+            bool free = (entry.Flags & 0x1) == 0;
+            bool @internal = (entry.Flags & 0x8) != 0;
+            var actualSize = entry.Size * 8u - Math.Max( 8u, entry.UnusedBytes ); //I don't understand why unused is less than 8 sometimes
+            var entryBodyAddr = entryAddr + 8;
+            if(targetAddr < entryBodyAddr)
+            {
+                return new DbgSpecificSubpieceOfAVirtualAllocBlock( entryBodyAddr, free, actualSize, @internal, "Heap Entry Header" );
+            }
+            if (@internal)
+            {
+                var userdataHeaderType = GetTypeNamed( debugger, "_HEAP_USERDATA_HEADER" );
+                dynamic userDataHeader = debugger.GetValueForAddressAndType( entryAddr + 8, userdataHeaderType );
+                if( userDataHeader.Signature == 0xF0E0D0C0 )
+                {
+                    dynamic subSegment = userDataHeader.SubSegment;
+                    uint blockSize = subSegment.BlockSize * 8u;
+                    uint blockCount = subSegment.BlockCount + 0u;
+
+                    ulong entriesStart = entryAddr + 8;
+                    if( userdataHeaderType.Members.HasItemNamed( "EncodedOffsets" ) )
+                    {
+                        uint encodedOffsets = userDataHeader.EncodedOffsets.StrideAndOffset + 0u;
+                        encodedOffsets ^= (uint) subSegment.UserBlocks.DbgGetPointer();
+                        encodedOffsets ^= ReadLFHKey( debugger );
+                        entriesStart += (ushort) encodedOffsets;
+                    }
+                    else
+                    {
+                        entriesStart += userdataHeaderType.Size;
+                    }
+
+                    if( targetAddr >= entriesStart )
+                    {
+                        uint idx = (uint)(targetAddr - entriesStart) / blockSize;
+                        entryAddr = entriesStart + idx * blockSize;
+                        var unused = debugger.ReadMemAs<byte>( entryAddr + 7 ) & 0x3Fu;
+                        if(unused == 0)
+                        {
+                            free = true;
+                        }
+                        else if(unused < 8)
+                        {
+                            unused = 8; //TODO: understand this
+                        }
+                        actualSize = blockSize - unused;
+                        return new DbgSpecificSubpieceOfAVirtualAllocBlock( entryAddr + 8, free, actualSize, false, "LFH entry" );
+                    }
+                    else
+                    {
+                        return new DbgSpecificSubpieceOfAVirtualAllocBlock( entryAddr + 8, free, actualSize, true, $"LFH subsegment header, {blockCount} blocks of {blockSize:X} bytes" );
+                    }
+                }
+            }
+
+            return new DbgSpecificSubpieceOfAVirtualAllocBlock( entryAddr + 8, free, actualSize, @internal );
+
+        }
+
+        private static int sm_ntdllSymbolCookie;
+        private static uint sm_lfhKey;
+        private static uint ReadLFHKey( DbgEngDebugger debugger )
+        {
+            var ntdll = debugger.GetNtdllModuleEffective();
+            if( sm_ntdllSymbolCookie != ntdll.SymbolCookie )
+            {
+                foreach( var sym in debugger.FindSymbol_Enum( ntdll.Name + "!RtlpLFHKey" ) )
+                {
+                    sm_ntdllSymbolCookie = ntdll.SymbolCookie;
+                    return sm_lfhKey = debugger.ReadMemAs<uint>( sym.Address );
+                }
+            }
+            return sm_lfhKey;
+        }
+
+        public DbgSpecificSubpieceOfAVirtualAllocBlock(ulong addr, bool free, ulong size, bool @internal = false, string description = "") : base(addr)
         {
             Address = addr;
             IsFree = free;
             PieceSize = size;
+            Internal = @internal;
+            Description = description;
         }
         
 
         public bool IsFree { get; }
         public ulong Address { get; }
         public ulong PieceSize { get; }
+        public string Description { get; }
+        public bool Internal { get; }
 
         public override ColorString ToColorString()
         {
             var cs = base.ToColorString();
             cs.AppendLine();
-            cs.Append("Heap entry body ");
+            cs.Append(Description);
+            cs.Append( " " );
             cs.Append(DbgProvider.FormatAddress(Address, Debugger.TargetIs32Bit, true, true, ConsoleColor.DarkCyan));
-            cs.Append($" size 0x{PieceSize:X,DarkGreen}");
+            cs.Append($" size 0x{PieceSize:X,DarkGreen} ");
             if (IsFree)
             {
                 cs.AppendPushPopFgBg(ConsoleColor.Black, ConsoleColor.Gray, "Free");
@@ -307,6 +394,10 @@ namespace MS.Dbg
             else
             {
                 cs.AppendPushPopFg(ConsoleColor.Gray, "Busy");
+                if(Internal)
+                {
+                    cs.AppendPushPopFg( ConsoleColor.Magenta, " Internal" );
+                }
             }
 
             return cs;

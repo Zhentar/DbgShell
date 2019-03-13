@@ -309,7 +309,7 @@ namespace MS.Dbg
             m_userCache?.TryRemove( modBase, out _ );
         }
 
-
+        private static Random sm_cookieSource = new Random();
         private Dictionary< ulong, int > m_symbolCookies = new Dictionary< ulong, int >();
 
         /// <summary>
@@ -327,7 +327,7 @@ namespace MS.Dbg
                 int curCookie;
                 if( !m_symbolCookies.TryGetValue( modBase, out curCookie ) )
                 {
-                    m_symbolCookies.Add( modBase, 1 );
+                    m_symbolCookies.Add( modBase, sm_cookieSource.Next() );
                 }
                 else
                 {
@@ -357,8 +357,7 @@ namespace MS.Dbg
                 // If someone is asking for this cookie, then they will need to know about
                 // changes in the future. We stick a 0 in so that unqualified symbol
                 // reloads (i.e. just ".reload") will increment it.
-                m_symbolCookies[ modBase ] = 0;
-                return 0;
+                curCookie = m_symbolCookies[ modBase ] = sm_cookieSource.Next();
             }
             return curCookie;
         } // end GetSymbolCookie()
