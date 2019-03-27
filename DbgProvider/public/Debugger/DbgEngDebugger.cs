@@ -32,17 +32,26 @@ namespace MS.Dbg
             {
                 if( null == g_Debugger )
                 {
-                    g_Debugger = DbgEngThread.Singleton.Execute( () =>
+                    DbgEngThread.Singleton.Execute( () =>
                         {
-                            WDebugClient dc;
-                            StaticCheckHr( WDebugClient.DebugCreate( out dc ) );
-                            return new DbgEngDebugger( dc, DbgEngThread.Singleton );
+                            if( null == g_Debugger )
+                            {
+                                StaticCheckHr( WDebugClient.DebugCreate( out WDebugClient dc ) );
+                                g_Debugger = new DbgEngDebugger( dc, DbgEngThread.Singleton );
+                            }
                         } );
                 }
                 return g_Debugger;
             }
         } // end property _GlobalDebugger
 
+        public static void StartPreloadDbgEng()
+        {
+            DbgEngThread.Singleton.QueueAction( () =>
+                {
+                    var _ = _GlobalDebugger;
+                } );
+        }
 
         /// <summary>
         ///    Gets a DbgEngDebugger object.
@@ -2335,7 +2344,7 @@ namespace MS.Dbg
                 } );
         } // end WriteMem()
 
-        public unsafe void WriteMem< T >( ulong address, T[] changes ) where T : unmanaged
+        public void WriteMem< T >( ulong address, T[] changes ) where T : unmanaged
         {
             WriteMem( address, new ReadOnlyMemory< T >( changes ) );
         } // end WriteMem()
@@ -2379,22 +2388,8 @@ namespace MS.Dbg
             }
             CheckHr( hr );
             return true;
-        }
+        } // end _TryCheckMemoryReadHr()
 
-        public bool SearchMemory(ulong startAddress, ulong endAddress, byte[] value, bool writableOnly, out ulong matchAddress)
-        {
-            matchAddress = 0;
-            if(startAddress >= endAddress) { return false; }
-            ulong matchOffset = 0;
-            bool success = ExecuteOnDbgEngThread(() =>
-            {
-                var flags = writableOnly ? DEBUG_VSEARCH.WRITABLE_ONLY : DEBUG_VSEARCH.DEFAULT;
-                int hr = m_debugDataSpaces.SearchVirtual2(startAddress, endAddress - startAddress, flags, value, 1, out matchOffset);
-                return _TryCheckMemoryReadHr(hr);
-            });
-            matchAddress = matchOffset;
-            return success;
-        }
 
         public ulong[] ReadMemPointers( ulong address, uint numDesired )
         {
@@ -3253,7 +3248,7 @@ namespace MS.Dbg
 
         private const string _NT_SYMBOL_PATH = "_NT_SYMBOL_PATH";
 
-        private void _EnsureSymbolsLoaded( DbgModuleInfo mod, CancellationToken cancelToken )
+        private void _TryEnsureSymbolsLoaded( DbgModuleInfo mod, CancellationToken cancelToken )
         {
             if( null == m_sympath )
             {
@@ -3363,16 +3358,16 @@ namespace MS.Dbg
                         } // end for( each img name )
                     } // end if( first reload attempt failed )
                 } );
-        } // end _EnsureSymbolsLoaded()
+        } // end _TryEnsureSymbolsLoaded()
 
 
-        private void _EnsureSymbolsLoaded( string modPattern, CancellationToken cancelToken )
+        private void _TryEnsureSymbolsLoaded( string modPattern, CancellationToken cancelToken )
         {
             int numMatches = 0;
             foreach( DbgModuleInfo mod in MatchModuleName( modPattern ) )
             {
                 numMatches++;
-                _EnsureSymbolsLoaded( mod, cancelToken );
+                _TryEnsureSymbolsLoaded( mod, cancelToken );
             }
             if( (0 == numMatches) &&
                 !System.Management.Automation.WildcardPattern.ContainsWildcardCharacters( modPattern ) )
@@ -3493,7 +3488,7 @@ namespace MS.Dbg
             DbgProvider.ParseSymbolName( pattern, out modName, out bareSym, out offset );
             pattern = AdjustPattern( pattern, ref modName );
 
-            _EnsureSymbolsLoaded( modName, cancelToken );
+            _TryEnsureSymbolsLoaded( modName, cancelToken );
 
             return StreamFromDbgEngThread< DbgPublicSymbol >( cancelToken, ( ct, emit ) =>
             {
@@ -3579,7 +3574,7 @@ namespace MS.Dbg
             DbgProvider.ParseSymbolName( pattern, out modName, out bareSym, out offset );
             pattern = AdjustPattern( pattern, ref modName );
 
-            _EnsureSymbolsLoaded( modName, cancelToken );
+            _TryEnsureSymbolsLoaded( modName, cancelToken );
 
             return StreamFromDbgEngThread< DbgPublicSymbol >( cancelToken, ( ct, emit ) =>
             {
@@ -3623,7 +3618,7 @@ namespace MS.Dbg
             // May need to trigger symbol load; dbghelp won't do it.
 
             var mod = GetModuleByAddress( address );
-            _EnsureSymbolsLoaded( mod, cancelToken );
+            _TryEnsureSymbolsLoaded( mod, cancelToken );
 
             return StreamFromDbgEngThread<DbgPublicSymbol>( cancelToken, ( ct, emit ) =>
             {
@@ -3698,7 +3693,7 @@ namespace MS.Dbg
                                                      string typeName,
                                                      CancellationToken cancelToken = default )
         {
-            _EnsureSymbolsLoaded( module, cancelToken );
+            _TryEnsureSymbolsLoaded( module, cancelToken );
             return ExecuteOnDbgEngThread( () =>
                 {
                     SymbolInfo symInfo = DbgHelp.TryGetTypeFromName( m_debugClient,
@@ -3777,7 +3772,23 @@ namespace MS.Dbg
             DbgProvider.ParseSymbolName( pattern, out modName, out bareSym, out offset );
             pattern = AdjustPattern( pattern, ref modName );
 
-            _EnsureSymbolsLoaded( modName, cancelToken );
+            _TryEnsureSymbolsLoaded( modName, cancelToken );
+
+            // If we don't get proper PDB symbols, EnumTypesByName will give us an
+            // ERROR_INVALID_PARAMETER error, which is unhelpful (it makes it seem like
+            // there's a bug in DbgShell code, rather than a simple lack of symbolic
+            // information). So we're going to bail up-front if we don't have symbols.
+
+            var mod = GetModuleByName( modName, cancelToken ).FirstOrDefault();
+            if( mod.SymbolType != DEBUG_SYMTYPE.PDB )
+            {
+                throw new DbgProviderException( Util.Sprintf( "Unable to enumerate types without symbol info (PDB) for {0}.",
+                                                              mod.Name ),
+                                                "NeedPdbForTypeInfo",
+                                                System.Management.Automation.ErrorCategory.ObjectNotFound,
+                                                null, // innerException
+                                                mod );
+            }
 
             return StreamFromDbgEngThread<T>( cancelToken, ( ct, emit ) =>
             {
@@ -3785,6 +3796,7 @@ namespace MS.Dbg
                 // Handy for testing cancellation.
                 bool testGoSlow = !String.IsNullOrEmpty( Environment.GetEnvironmentVariable( "__DBGSHELL_TEST_SLOW" ) );
 #endif
+                // If we don't have symbols, this will fail
                 foreach( var si in DbgHelp.EnumTypesByName( DebuggerInterface,
                                                             0,
                                                             pattern,
@@ -4941,6 +4953,57 @@ namespace MS.Dbg
             }
         } // end property Processes
 
+
+        [Flags]
+        internal enum TargetType
+        {
+            None    =    0,
+            UmLive  = 0x01,
+            UmDump  = 0x02,
+            KmLive  = 0x04,
+            KmDump  = 0x08,
+            Any     = 0x0f,
+        }
+
+        internal TargetType GetCurrentTargetTypes()
+        {
+            TargetType result = TargetType.None;
+
+            foreach( var target in m_targets.Values )
+            {
+                if( !target.IsKernel &&  target.IsLive ) result |= TargetType.UmLive;
+                if( !target.IsKernel && !target.IsLive ) result |= TargetType.UmDump;
+                if(  target.IsKernel &&  target.IsLive ) result |= TargetType.KmLive;
+                if(  target.IsKernel && !target.IsLive ) result |= TargetType.KmDump;
+            }
+            return result;
+        }
+
+        private static readonly bool? Yes   = true;
+        private static readonly bool? No    = false;
+        private static readonly bool? Maybe = null;
+
+        static readonly bool?[] s_validTargetCombinations = new bool?[]
+        // 00   01   02   03    04   05     06     07       08   09     0a     0b       0c     0d       0e       0f
+        // --   UL   UD   UL+UD KL   KL+UL  KL+UD  KL+UD+UL KD   KD+UL  KD+UD  KD+UD+UL KD+KL  KD+KL+UL KD+KL+UD KD+KL+UD+UL
+        {  Yes, Yes, Yes, No,   Yes, Maybe, Maybe, No,      Yes, Maybe, Maybe, No,      Maybe, Maybe,   No,      No, };
+        // All the "Maybes" are probably "Nos", but we can at least try them out.
+
+        /// <summary>
+        /// Returns true to mean "yes"; false for "no", and null for "maybe" ("don't know; haven't tried it").
+        /// </summary>
+        internal bool? CanAddTargetType( TargetType newTargetType )
+        {
+            TargetType targets = GetCurrentTargetTypes();
+
+            Util.Assert( s_validTargetCombinations[ (int) targets ] != false );
+
+            targets |= newTargetType;
+
+            return s_validTargetCombinations[ (int) targets ];
+        }
+
+
         public void ForceRebuildProcessTree()
         {
             m_cachedContext = null;
@@ -5141,15 +5204,15 @@ namespace MS.Dbg
 
         public void DiscardCachedModuleInfo()
         {
-            _DiscardCachedModuleInfo( alsoDiscardBlogalUserCache: false );
+            _DiscardCachedModuleInfo( alsoDiscardLocalUserCache: false );
         }
 
-        private void _DiscardCachedModuleInfo( bool alsoDiscardBlogalUserCache )
+        private void _DiscardCachedModuleInfo( bool alsoDiscardLocalUserCache )
         {
             foreach( var target in m_targets.Values )
             {
                 target.DiscardCachedModuleInfo();
-                if( alsoDiscardBlogalUserCache )
+                if( alsoDiscardLocalUserCache )
                 {
                     target.DiscardUserCacheForModule( 0 );
                 }
@@ -5160,7 +5223,7 @@ namespace MS.Dbg
         {
             if( modBase == 0 )
             {
-                _DiscardCachedModuleInfo( alsoDiscardBlogalUserCache: true );
+                _DiscardCachedModuleInfo( alsoDiscardLocalUserCache: true );
                 return;
             }
             foreach( var target in m_targets.Values )
