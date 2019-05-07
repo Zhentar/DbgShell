@@ -163,6 +163,9 @@
     <Compile Include="public\Commands\WriteDbgMemoryCommand.cs" />
     <Compile Include="public\Commands\WriteDbgShellLogCommand.cs" />
     <Compile Include="public\DbgPluginInterfaces.cs" />
+    <Compile Include="public\Debugger\Address.cs" />
+    <Compile Include="public\Debugger\AddressMap.cs" />
+    <Compile Include="public\Debugger\AddressRegionProviders\ModuleRegionProvider.cs" />
     <Compile Include="public\Debugger\BitHelper.cs" />
     <Compile Include="public\Debugger\ClrObject.cs" />
     <Compile Include="public\Debugger\CreateProcessConsoleOption.cs" />
@@ -201,6 +204,7 @@
     <Compile Include="public\Debugger\DefaultDerivedTypeDetectionPlugin.cs" />
     <Compile Include="public\Debugger\Enums.cs" />
     <Compile Include="public\Debugger\HoldingPipelineCallback.cs" />
+    <Compile Include="public\Debugger\IMAGE_SECTION_HEADER.cs" />
     <Compile Include="public\Debugger\ModuleVersionInfo.cs" />
     <Compile Include="public\Debugger\SymbolTransformRecord.cs" />
     <Compile Include="public\Debugger\TypeInfo\DbgArrayTypeInfo.cs" />

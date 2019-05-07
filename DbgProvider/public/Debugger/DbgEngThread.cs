@@ -71,6 +71,11 @@ namespace MS.Dbg
 
                 // Maybe this isn't a program invariant... but I'm not expecting windbg to
                 // switch threads on me.
+                AssertCurrentThreadIsDbgEngThread();
+            }
+
+            internal void AssertCurrentThreadIsDbgEngThread()
+            {
                 Util.Assert( m_dbgEngThread == Thread.CurrentThread );
             }
 

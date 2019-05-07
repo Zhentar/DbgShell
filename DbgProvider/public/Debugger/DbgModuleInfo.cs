@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using DbgEngWrapper;
 using Microsoft.Diagnostics.Runtime;
 using Microsoft.Diagnostics.Runtime.Interop;
@@ -508,6 +509,22 @@ namespace MS.Dbg
             // Could anything else change?
         } // end Refresh()
 
+
+        public IMAGE_SECTION_HEADER[] GetSectionHeaders()
+        {
+            return Debugger.ExecuteOnDbgEngThread( () =>
+                {
+                    //read e_lfanew
+                    var readOffset = Debugger.ReadMemAs< uint >( m_baseAddr + 60 );
+                    readOffset += 4; //Skip past the IMAGE_NT_HEADERS signature field
+
+                    var fileHeader = Debugger.ReadMemAs< IMAGE_FILE_HEADER >( m_baseAddr + readOffset );
+                    readOffset += (uint)Unsafe.SizeOf< IMAGE_FILE_HEADER >();
+                    readOffset += fileHeader.SizeOfOptionalHeader;
+
+                    return Debugger.ReadMemAs_TArray< IMAGE_SECTION_HEADER >( m_baseAddr + readOffset, fileHeader.NumberOfSections );
+                } );
+        }
 
         public ColorString SymbolStatus
         {

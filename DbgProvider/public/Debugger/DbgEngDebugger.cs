@@ -2245,6 +2245,8 @@ namespace MS.Dbg
 
         internal unsafe bool TryReadVirtualDirect(ulong address, Span<byte> buffer)
         {
+            m_dbgEngThread.AssertCurrentThreadIsDbgEngThread();
+
             fixed (byte* pBytes = buffer)
             {
                 int hr = m_debugDataSpaces.ReadVirtualDirect(address, (uint)buffer.Length, pBytes, out var bytesRead);

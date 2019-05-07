@@ -25,6 +25,9 @@ namespace MS.Dbg
         private IEqualityComparer< TItem > m_equalityComparer;
         //private bool m_isReadOnly; // TODO: make this thing freezable?
 
+        public SortedList( IComparer<TItem> sortComparer ) : this( sortComparer, EqualityComparer<TItem>.Default )
+        { }
+
         public SortedList( IComparer< TItem > sortComparer,
                            IEqualityComparer< TItem > equalityComparer )
         {
