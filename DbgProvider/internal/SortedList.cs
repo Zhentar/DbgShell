@@ -18,11 +18,11 @@ namespace MS.Dbg
     ///    items are stored in the order they were inserted.
     /// </remarks>
     /// <typeparam name="TItem"></typeparam>
-    internal class SortedList< TItem > : IList< TItem >
+    internal class SortedList< TItem > : IList< TItem >, IReadOnlyList< TItem >
     {
-        private List< TItem > m_list;
-        private IComparer< TItem > m_sortComparer;  // duplicates allowed
-        private IEqualityComparer< TItem > m_equalityComparer;
+        private readonly List< TItem > m_list;
+        private readonly IComparer< TItem > m_sortComparer;  // duplicates allowed
+        private readonly IEqualityComparer< TItem > m_equalityComparer;
         //private bool m_isReadOnly; // TODO: make this thing freezable?
 
         public SortedList( IComparer<TItem> sortComparer ) : this( sortComparer, EqualityComparer<TItem>.Default )
@@ -31,14 +31,8 @@ namespace MS.Dbg
         public SortedList( IComparer< TItem > sortComparer,
                            IEqualityComparer< TItem > equalityComparer )
         {
-            if( null == sortComparer )
-                throw new ArgumentNullException( "sortComparer" );
-
-            if( null == equalityComparer )
-                throw new ArgumentNullException( "equalityComparer" );
-
-            m_sortComparer = sortComparer;
-            m_equalityComparer = equalityComparer;
+            m_sortComparer = sortComparer ?? throw new ArgumentNullException( nameof(sortComparer) );
+            m_equalityComparer = equalityComparer ?? throw new ArgumentNullException( nameof(equalityComparer) );
             m_list = new List< TItem >();
         } // end constructor
 
@@ -46,11 +40,8 @@ namespace MS.Dbg
                            IComparer< TItem > sortComparer,
                            IEqualityComparer< TItem > equalityComparer )
         {
-            if( null == sortComparer )
-                throw new ArgumentNullException( "sortComparer" );
-
-            if( null == equalityComparer )
-                throw new ArgumentNullException( "equalityComparer" );
+            m_sortComparer     = sortComparer ?? throw new ArgumentNullException( nameof( sortComparer ) );
+            m_equalityComparer = equalityComparer ?? throw new ArgumentNullException( nameof( equalityComparer ) );
 
             m_sortComparer = sortComparer;
             m_equalityComparer = equalityComparer;
@@ -102,7 +93,7 @@ namespace MS.Dbg
             return -1;
         }
 
-        private void _ComplainSorted()
+        private static void _ComplainSorted()
         {
             throw new InvalidOperationException( "This is a sorted list, so you are not permitted to specify the insertion index." );
         }
@@ -176,10 +167,7 @@ namespace MS.Dbg
             m_list.CopyTo( array, arrayIndex );
         }
 
-        public int Count
-        {
-            get { return m_list.Count; }
-        }
+        public int Count => m_list.Count;
 
         public bool IsReadOnly
         {

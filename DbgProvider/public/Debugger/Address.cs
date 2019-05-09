@@ -8,7 +8,7 @@ namespace MS.Dbg
 { 
     public readonly struct Address : ISupportColor, IComparable<Address>, IEquatable<Address>
     {
-        private const ulong FlagBitmask = 0x7000_0000_0000_0000;
+        private const ulong FlagBitmask = 0x8000_0000_0000_0000;
 
         public Address(ulong address, DbgEngDebugger debugger) : this(address, debugger.TargetIs32Bit)
         { }
@@ -28,6 +28,7 @@ namespace MS.Dbg
 
         public ColorString ToColorString( ConsoleColor color ) => DbgProvider.FormatAddress( Value, Is32Bit, true, true, color );
 
+        public override string ToString() => Value.ToString( Is32Bit ? "X8" : "X16" );
 
         //Operators & interfaces
 
@@ -37,6 +38,7 @@ namespace MS.Dbg
 
 
         public static Address operator +( Address lhs, ulong rhs ) => new Address( lhs.Value + rhs, lhs.Is32Bit );
+        public static Address operator +( Address lhs, uint rhs ) => new Address( lhs.Value + rhs, lhs.Is32Bit );
 
         //While this is technically a lossy conversion, the loss is purely formatting so implicit it is for convenience.
         public static implicit operator ulong(Address a) => a.Value;

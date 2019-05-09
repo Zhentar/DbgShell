@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 
 namespace MS.Dbg
@@ -56,7 +57,7 @@ namespace MS.Dbg
 
         public uint DefaultDisplayColumns { get; set; }
 
-        public DbgVirtualAllocBlock VirtAlloc { get; }
+        public MemoryRegionStack MemoryRegion { get; }
 
         public DbgMemory( byte[] bytes )
             : this( 0, bytes, false, false, ( x ) => { return new ColorString( ConsoleColor.DarkGray, "<symbol lookup function not provided>" ); } )
@@ -112,7 +113,7 @@ namespace MS.Dbg
             IsBigEndian = isBigEndian;
             m_is32Bit = is32bit;
             m_lookupSymbol = lookupSymbol;
-            VirtAlloc = DbgVirtualAllocBlock.GetBlockForAddr(address);
+            MemoryRegion = AddressMap.GetMemoryRegionsForAddress( DbgEngDebugger._GlobalDebugger, address );
 
             if( isBigEndian )
                 throw new NotSupportedException( "No support for big-endian data yet." );

@@ -1519,7 +1519,7 @@ Register-AltTypeFormatEntries {
     }
 
     New-AltTypeFormatEntry -TypeName 'MS.Dbg.DbgMemory' {
-        New-AltCustomViewDefinition -GroupBy VirtAlloc {
+        New-AltCustomViewDefinition -GroupBy MemoryRegion {
             if($_.DefaultDisplayFormat -eq [MS.Dbg.DbgMemoryDisplayFormat]::DWordsWithBits) {
                 "                    3          2          1          0"
                 "                   10987654 32109876 54321098 76543210"

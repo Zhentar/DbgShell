@@ -128,6 +128,7 @@
     <Compile Include="public\Commands\AddDbgExtensionCommand.cs" />
     <Compile Include="public\Commands\AliasCommands.cs" />
     <Compile Include="public\Commands\BreakpointListCommands.cs" />
+    <Compile Include="public\Commands\GetDbgAddressMap.cs" />
     <Compile Include="public\Commands\SearchDbgMemoryCommand.cs" />
     <Compile Include="public\Commands\FindWindbgDirCommand.cs" />
     <Compile Include="public\Commands\GetClrHeapCommand.cs" />
@@ -135,7 +136,6 @@
     <Compile Include="public\Commands\GetDbgEffectiveProcessorTypeCommand.cs" />
     <Compile Include="public\Commands\GetDbgNearSymbolCommand.cs" />
     <Compile Include="public\Commands\GetDbgShellLogCommand.cs" />
-    <Compile Include="public\Commands\GetDbgVirtualAllocBlockCommand.cs" />
     <Compile Include="public\Commands\InvokeDbgExtensionCommand.cs" />
     <Compile Include="public\Commands\OutDbgEngCommand.cs" />
     <Compile Include="public\Commands\RegisterDbgPlugin.cs" />
@@ -166,6 +166,7 @@
     <Compile Include="public\Debugger\Address.cs" />
     <Compile Include="public\Debugger\AddressMap.cs" />
     <Compile Include="public\Debugger\AddressRegionProviders\ModuleRegionProvider.cs" />
+    <Compile Include="public\Debugger\AddressRegionProviders\NativeHeapRegionProvider.cs" />
     <Compile Include="public\Debugger\BitHelper.cs" />
     <Compile Include="public\Debugger\ClrObject.cs" />
     <Compile Include="public\Debugger\CreateProcessConsoleOption.cs" />
@@ -199,7 +200,6 @@
     <Compile Include="public\Debugger\DbgSimpleSymbol.cs" />
     <Compile Include="public\Debugger\DbgMemberSymbol.cs" />
     <Compile Include="public\Debugger\DbgPublicSymbol.cs" />
-    <Compile Include="public\Debugger\DbgVirtualAllocBlock.cs" />
     <Compile Include="public\Debugger\DebugOutputCallbacks.cs" />
     <Compile Include="public\Debugger\DefaultDerivedTypeDetectionPlugin.cs" />
     <Compile Include="public\Debugger\Enums.cs" />

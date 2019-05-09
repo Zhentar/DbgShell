@@ -32,6 +32,7 @@ namespace MS.Dbg.Commands
                     }
                 }
                 catch (RuntimeBinderException) { } //There's probably a better way to do this
+                catch( PropertyNotFoundException ) { }
 
                 return base.Transform(engineIntrinsics, inputData);
             }

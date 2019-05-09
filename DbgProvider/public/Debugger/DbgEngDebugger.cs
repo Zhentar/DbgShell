@@ -3536,13 +3536,13 @@ namespace MS.Dbg
 
         public IDiaSession GetDiaSession(DbgModuleInfo module)
         {
-            _EnsureSymbolsLoaded( module, default );
+            _TryEnsureSymbolsLoaded( module, default );
             return ExecuteOnDbgEngThread( () => DbgHelp.GetDiaSession(DebuggerInterface, module.BaseAddress));
         }
 
         public WDbgHelpDia GetDiaSession2( DbgModuleInfo module )
         {
-            _EnsureSymbolsLoaded( module, default );
+            _TryEnsureSymbolsLoaded( module, default );
             return ExecuteOnDbgEngThread( () => DbgHelp.GetDiaSession2( DebuggerInterface, module.BaseAddress ) );
         }
 

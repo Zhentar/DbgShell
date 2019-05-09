@@ -41,9 +41,18 @@ namespace MS.Dbg
         public ulong Size { get; }
         public abstract string ModuleName { get; }
 
-        public abstract IEnumerable<IMemoryRegion> SubRegions { get; }
+        public abstract IEnumerable< IMemoryRegion > SubRegions { get; }
+        
 
-        public ColorString ToColorString() => new ColorString( ConsoleColor.Cyan, ModuleName );
+        public ColorString ToColorString()
+        {
+            var cs = BaseAddress.ToColorString( ConsoleColor.DarkYellow );
+            cs.Append( " - " );
+            cs.Append( (BaseAddress + Size).ToColorString( ConsoleColor.DarkYellow ) );
+            cs.Append( " " );
+            cs.Append( new ColorString( ConsoleColor.Cyan, ModuleName ) );
+            return cs;
+        }
     }
 
     internal class NativeModuleRegion : ModuleRegion
@@ -61,10 +70,13 @@ namespace MS.Dbg
         {
             get
             {
-                yield break;
-                //TODO: yield return PE sections
+                foreach( var section in m_moduleInfo.GetSectionHeaders() )
+                {
+                    yield return new LeafRegion( BaseAddress + section.VirtualAddress, section.VirtualSize, section.Name );
+                }
             }
         }
+        
     }
 
     internal class ClrModuleRegion : ModuleRegion
