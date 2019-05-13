@@ -52,9 +52,10 @@ namespace MS.Dbg
             {
                 debugger.SymbolStateChanged += ( _, __ ) => DumpAddressMapAtSlightestProvocation();
                 debugger.DebuggeeStateChanged += ( _, __ ) => DumpAddressMapAtSlightestProvocation();
+                sm_initDone = true;
             }
 
-            return sm_cachedAddressMap ?? (sm_cachedAddressMap = BuildAddressMap( debugger ));
+            return sm_cachedAddressMap ?? (sm_cachedAddressMap = debugger.ExecuteOnDbgEngThread( () => BuildAddressMap( debugger )));
         }
 
         private static AddressMap BuildAddressMap( DbgEngDebugger debugger )
@@ -93,6 +94,12 @@ namespace MS.Dbg
                     {
                         addrList.Add( region );
                     }
+                }
+
+                //dbgeng seems to be susceptible to wigging out somewhere north of the 4GB line in 32-bit mode with Wow64 processes
+                if( debugger.TargetIs32Bit && address > uint.MaxValue )
+                {
+                    break;
                 }
             }
 
@@ -196,14 +203,18 @@ namespace MS.Dbg
     {
         private readonly IReadOnlyList<IMemoryRegion> m_regions;
 
-        public MemoryRegionStack( IReadOnlyList<IMemoryRegion> regions )
-        {
-            m_regions = regions;
-        }
+        public MemoryRegionStack( IReadOnlyList<IMemoryRegion> regions ) => m_regions = regions;
 
-        public ColorString ToColorString()
+        public ColorString ToColorString() => ToColorString( false );
+ 
+        public ColorString ToColorString(bool allLevels)
         {
+            if( !allLevels )
+            {
+                return m_regions[ m_regions.Count - 1 ].ToColorString();
+            }
             var cs = new ColorString();
+            
             foreach( var region in m_regions )
             {
                 if( cs.Length > 0 ) { cs.Append( "\n" ); }
@@ -310,7 +321,7 @@ namespace MS.Dbg
             var cs = BaseAddress.ToColorString( ConsoleColor.DarkYellow );
             cs.Append( " - " );
             cs.Append( (BaseAddress + Size).ToColorString( ConsoleColor.DarkYellow ) );
-            cs.Append( $" MEM_{Type}" );
+            cs.Append( $" MEM_{Type} " );
             cs.Append( Type == MEM.MAPPED ? Mapped : Unknown );
             return cs;
         }

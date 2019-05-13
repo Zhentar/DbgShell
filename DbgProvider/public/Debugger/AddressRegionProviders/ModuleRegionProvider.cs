@@ -1,8 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using Microsoft.Diagnostics.Runtime;
 
 namespace MS.Dbg
@@ -11,8 +8,14 @@ namespace MS.Dbg
     {
         public IEnumerable<IMemoryRegion> IdentifyRegions( DbgEngDebugger debugger )
         {
+            var is32bit = debugger.TargetIs32Bit;
             foreach(var module in debugger.Modules)
             {
+                //Skip Wow64 ntdll from 32-bit mode
+                if( is32bit && module.BaseAddress > uint.MaxValue)
+                {
+                    break;
+                }
                 yield return new NativeModuleRegion( module );
             }
 
@@ -22,7 +25,7 @@ namespace MS.Dbg
                 {
                     if(clrModule.ImageBase > 0)
                     {
-                        yield return new ClrModuleRegion( clrModule, debugger.TargetIs32Bit );
+                        yield return new ClrModuleRegion( clrModule, is32bit );
                     }
                 }
             }
@@ -72,7 +75,7 @@ namespace MS.Dbg
             {
                 foreach( var section in m_moduleInfo.GetSectionHeaders() )
                 {
-                    yield return new LeafRegion( BaseAddress + section.VirtualAddress, section.VirtualSize, section.Name );
+                    yield return new LeafRegion( BaseAddress + section.VirtualAddress, section.VirtualSize, ModuleName + " " + section.Name );
                 }
             }
         }

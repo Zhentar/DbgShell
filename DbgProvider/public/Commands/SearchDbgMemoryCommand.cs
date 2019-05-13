@@ -38,11 +38,6 @@ namespace MS.Dbg.Commands
             }
         }
 
-        public class SearchResult
-        {
-            public ulong Address { get; set; }
-        }
-
         public enum SearchSize
         {
             Default,
@@ -124,7 +119,7 @@ namespace MS.Dbg.Commands
             Span<byte> bytes = stackalloc byte[4096];
             while (curPage < endAddress && Debugger.TryQueryVirtual(curPage, out var info) == 0 && !ct.IsCancellationRequested)
             {
-                var regionEnd = info.BaseAddress + info.RegionSize;
+                var regionEnd = Math.Min( endAddress,  info.BaseAddress + info.RegionSize);
                 curPage = regionEnd;
                 if( !IncludeReadOnly && (info.Protect & WRITABLE) == 0 )
                 {
@@ -133,7 +128,7 @@ namespace MS.Dbg.Commands
 
                 if ((info.State & MEM.COMMIT) != 0 && CheckMemType(info.Type, MemoryType))
                 {
-                    for (var page = info.BaseAddress; page < Math.Min(endAddress, regionEnd); page += 4096)
+                    for (var page = info.BaseAddress; page < regionEnd; page += 4096)
                     {
                         if (Debugger.TryReadVirtualDirect(page, bytes))
                         {
@@ -181,7 +176,7 @@ namespace MS.Dbg.Commands
                     int byteIdx = i * sizeof(T);
                     ulong address = page + (ulong) byteIdx;
                     var valueBytes = bytes.Slice(byteIdx, sizeof(T)).ToArray();
-                    var result = new DbgMemory( address, valueBytes, Debugger ) { DefaultDisplayFormat = DbgMemoryDisplayFormat.DWordsWithAscii };
+                    var result = new DbgMemory( address, valueBytes, Debugger ) { DefaultDisplayFormat = helper.DisplayFormat };
                     yield(result);
                 }
             }
@@ -193,6 +188,7 @@ namespace MS.Dbg.Commands
         public ulong BitwiseAnd(ulong lhs, ulong rhs) => lhs & rhs;
         public ulong ConvertUlong(ulong value) => value;
         public bool AreEqual(ulong lhs, ulong rhs) => lhs == rhs;
+        public DbgMemoryDisplayFormat DisplayFormat => DbgMemoryDisplayFormat.QWords;
     }
 
     internal struct UintIntegralTypeHelper : IIntegralTypeHelper<uint>
@@ -200,7 +196,7 @@ namespace MS.Dbg.Commands
         public uint BitwiseAnd(uint lhs, uint rhs) => lhs & rhs;
         public uint ConvertUlong(ulong value) => (uint) value;
         public bool AreEqual(uint lhs, uint rhs) => lhs == rhs;
-
+        public DbgMemoryDisplayFormat DisplayFormat => DbgMemoryDisplayFormat.DWords;
     }
 
     internal interface IIntegralTypeHelper<T> where T: unmanaged
@@ -208,5 +204,6 @@ namespace MS.Dbg.Commands
         T BitwiseAnd(T lhs, T rhs);
         T ConvertUlong(ulong value);
         bool AreEqual(T lhs, T rhs);
+        DbgMemoryDisplayFormat DisplayFormat { get; }
     }
 }
