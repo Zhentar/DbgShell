@@ -4,21 +4,24 @@ using System.Linq;
 using System.Management.Automation;
 using System.Runtime.InteropServices;
 using System.Threading;
+using Microsoft.Diagnostics.Runtime.Interop;
 
 namespace MS.Dbg.AddressRegionProviders
 {
     internal class NativeHeapRegionProvider : IRegionProvider
     {
-        public IEnumerable<IMemoryRegion> IdentifyRegions( DbgEngDebugger debugger )
+        public IEnumerable<MemoryRegionBase> IdentifyRegions( DbgEngDebugger debugger )
         {
             var dataSections = debugger.Modules.Select( m => (m, m.GetSectionHeaders().FirstOrDefault( h => h.Name == ".data" )) ).ToList();
             var types = new HeapTypeCache( debugger );
+            bool isDefaultHeap = true;
             foreach( var heapBase in AllHeaps( debugger ) )
             {
-                foreach( var segment in RegionsForHeap( heapBase, debugger, types, dataSections ) )
+                foreach( var segment in RegionsForHeap( heapBase, debugger, types, dataSections, isDefaultHeap ) )
                 {
                     yield return segment;
                 }
+                isDefaultHeap = false;
             }
         }
 
@@ -30,38 +33,62 @@ namespace MS.Dbg.AddressRegionProviders
             return debugger.ReadMemPointers( (ulong) peb.ProcessHeaps.DbgGetPointer(), numberOfHeaps );
         }
 
-        private static IEnumerable<IMemoryRegion> RegionsForHeap( ulong heapBase, DbgEngDebugger debugger, HeapTypeCache types, List<(DbgModuleInfo mod, IMAGE_SECTION_HEADER dataHdr)> dataSections )
+        private static IEnumerable<MemoryRegionBase> RegionsForHeap( ulong heapBase, DbgEngDebugger debugger, HeapTypeCache types,
+                                                                    List< (DbgModuleInfo mod, IMAGE_SECTION_HEADER dataHdr) > dataSections, bool isDefaultHeap )
         {
             var heap = GetHeap( heapBase, debugger );
             var segmentList = (ulong) heap.SegmentList.DbgGetOperativeSymbol().Address;
             ulong encoding = heap.Encoding.AgregateCode.ToUint64( null );
-
-            var possibleSymbols = new List< string >();
             bool is32bit = debugger.TargetIs32Bit;
+            var heapName = isDefaultHeap ? new ColorString(ConsoleColor.DarkGray, "Default Heap") : FindHeapSymbol( heapBase, debugger, dataSections, is32bit );
+            heapName = heapName ?? new ColorString( "Heap " ).Append( new Address( heapBase, debugger ) );
+            
+
+            foreach( var segment in debugger.EnumerateLIST_ENTRY( segmentList, types.HeapSegment, "SegmentListEntry" ) )
+            {
+                var region = new NativeHeapSegmentRegion( heapBase, heapName, segment.WrappingPSObject, encoding, types, debugger );
+                yield return region;
+            }
+            ulong virtAllocHead = heap.VirtualAllocdBlocks.DbgGetOperativeSymbol().Address;
+            var commitSizeOffset = is32bit ? 0x10u : 0x20u;
+            foreach( var heapBlock in debugger.EnumerateLIST_ENTRY_raw( virtAllocHead, 0 ) )
+            {
+                var size = debugger.ReadMemAs_UInt32( heapBlock + commitSizeOffset );
+                yield return new LeafRegion( new Address( heapBlock, debugger ), size,   new ColorString(heapName).Append(" VirtualAllocBlock") );
+            }
+        }
+
+        private static ColorString FindHeapSymbol( ulong heapBase, DbgEngDebugger debugger, List<(DbgModuleInfo mod, IMAGE_SECTION_HEADER dataHdr)> dataSections, bool is32bit )
+        {
+            var possibleSymbols = new List<string>();
 
             //TODO: single search pass for all heaps, more DRY code, generally engoodify
             Span<byte> buffer = stackalloc byte[ 4096 ];
-            foreach( (DbgModuleInfo module, IMAGE_SECTION_HEADER dataHdr) in dataSections )
+            var noSymbolMatches = new List< (DbgModuleInfo mod, ulong offset) >();
+            foreach( var (module, dataHdr) in dataSections )
             {
-
-                for( uint offset = 0; offset < dataHdr.VirtualSize; offset+= 4096 )
+                for( uint offset = 0; offset < dataHdr.VirtualSize; offset += 4096 )
                 {
                     var currentPage = module.BaseAddress + dataHdr.VirtualAddress + offset;
                     if( debugger.TryReadVirtualDirect( currentPage, buffer ) )
                     {
                         if( is32bit )
                         {
-                            var searchSpan = MemoryMarshal.Cast< byte, uint >( buffer );
+                            var searchSpan = MemoryMarshal.Cast<byte, uint>( buffer );
                             for( int i = 0; i < searchSpan.Length; i++ )
                             {
                                 if( searchSpan[ i ] == heapBase )
                                 {
-                                    if(debugger.TryGetNameByOffset( currentPage + (uint) (i * sizeof( uint )),out var name, out var displacement ) )
+                                    if( debugger.TryGetNameByOffset( currentPage + (uint) (i * sizeof( uint )), out var name, out var displacement ) )
                                     {
                                         if( displacement == 0 )
                                         {
                                             possibleSymbols.Add( name );
                                         }
+                                    }
+                                    if( isNoSymbolType(module.SymbolType))
+                                    {
+                                        noSymbolMatches.Add( (module, dataHdr.VirtualAddress + offset) );
                                     }
                                 }
                             }
@@ -80,26 +107,28 @@ namespace MS.Dbg.AddressRegionProviders
                                             possibleSymbols.Add( name );
                                         }
                                     }
+                                    if( isNoSymbolType(module.SymbolType))
+                                    {
+                                        noSymbolMatches.Add( (module, dataHdr.VirtualAddress + offset) );
+                                    }
                                 }
                             }
                         }
                     }
                 }
+                if(possibleSymbols.Count > 1) { return null; }
+            }
+            if( possibleSymbols.Count == 0 && noSymbolMatches.Count == 1 )
+            {
+                return new ColorString( ConsoleColor.Magenta, $"{noSymbolMatches[ 0 ].mod.Name}!{noSymbolMatches[ 0 ].offset:X}" );
             }
 
             var heapName = possibleSymbols.Count == 1 ? new ColorString( ConsoleColor.Magenta, possibleSymbols[ 0 ] ) : null;
+            return heapName;
 
-
-            foreach( var segment in debugger.EnumerateLIST_ENTRY( segmentList, types.HeapSegment, "SegmentListEntry" ) )
+            bool isNoSymbolType( DEBUG_SYMTYPE type )
             {
-                yield return new NativeHeapSegmentRegion( heapBase, heapName, segment.WrappingPSObject, encoding, types, debugger);
-            }
-            ulong virtAllocHead = heap.VirtualAllocdBlocks.DbgGetOperativeSymbol().Address;
-            var commitSizeOffset = is32bit ? 0x10u : 0x20u;
-            foreach( var heapBlock in debugger.EnumerateLIST_ENTRY_raw( virtAllocHead, 0 ) )
-            {
-                var size = debugger.ReadMemAs_UInt32(heapBlock + commitSizeOffset);
-                yield return new LeafRegion( new Address( heapBlock, debugger ), size, "Heap VirtualAllocBlock" );
+                return type == DEBUG_SYMTYPE.EXPORT || type == DEBUG_SYMTYPE.NONE;
             }
         }
 
@@ -136,7 +165,7 @@ namespace MS.Dbg.AddressRegionProviders
 
 
 
-    internal abstract class HeapRegionBase : MemoryRegionBase
+    internal abstract class HeapRegionBase : ChildCachingMemoryRegion
     {
         protected readonly ColorString m_heapName;
         protected HeapRegionBase( ulong heapBase, ColorString heapName, ulong baseAddress, ulong size, HeapTypeCache typeCache, DbgEngDebugger debugger )
@@ -144,14 +173,14 @@ namespace MS.Dbg.AddressRegionProviders
         {
             TypeCache = typeCache;
             HeapBase = new Address( heapBase, debugger.TargetIs32Bit);
-            m_heapName = heapName ?? HeapBase.ToColorString();
+            m_heapName = heapName ?? new ColorString( "Heap " ).Append(HeapBase);
         }
         
         public Address HeapBase { get; }
 
         protected HeapTypeCache TypeCache { get; }
 
-        protected override ColorString Description => new ColorString( "Heap " ).Append( m_heapName );
+        public override ColorString Description => new ColorString( m_heapName ); //New wrapper string so subclasses can safely append
 
         [ StructLayout( LayoutKind.Explicit )]
         internal struct _HEAP_ENTRY
@@ -197,11 +226,11 @@ namespace MS.Dbg.AddressRegionProviders
         }
 
 
-        protected override ColorString Description => base.Description.Append( " Segment" );
+        public override ColorString Description => base.Description.Append( " Segment" );
 
-        protected override IEnumerable<IMemoryRegion> GetSubRegions( DbgEngDebugger debugger )
+        protected override IEnumerable<MemoryRegionBase> GetSubRegions( DbgEngDebugger debugger )
         {
-            return debugger.StreamFromDbgEngThread<IMemoryRegion>( default, ( ct, yield ) =>
+            return debugger.StreamFromDbgEngThread<MemoryRegionBase>( default, ( ct, yield ) =>
                 {
                     ulong heapHeaderOffset = m_heapSegment.Entry.DbgGetOperativeSymbol().Type.Members[ "AgregateCode" ].Offset;
                     dynamic segment = debugger.GetValueForAddressAndType( BaseAddress, TypeCache.HeapSegment );
@@ -223,7 +252,7 @@ namespace MS.Dbg.AddressRegionProviders
                         }
                         _HEAP_ENTRY entry = new _HEAP_ENTRY { AgregateCode = entryValue ^ m_heapEncoding };
                         ulong nextAddr = entryAddr + entry.Size * 8u;
-                        yield(new HeapEntryRegion( HeapBase, m_heapName, entry, entryAddr, TypeCache, Debugger ));
+                        yield(new HeapEntryRegion( HeapBase, m_heapName, entry, entryAddr, TypeCache, m_debugger ));
                         entryAddr = nextAddr + heapHeaderOffset;
                     }
                 } );
@@ -246,12 +275,14 @@ namespace MS.Dbg.AddressRegionProviders
         }
 
         private readonly _HEAP_ENTRY m_entry;
-        protected override ColorString Description => base.Description.Append( $" Entry ({m_entry.Size * 8u - Math.Max( 8u, m_entry.UnusedBytes ):X,White})" );
-        protected override IEnumerable< IMemoryRegion > GetSubRegions( DbgEngDebugger debugger )
+        public override ColorString Description => base.Description.Append( $" Entry (0x{EntrySize:X,White} bytes)" );
+
+        private uint EntrySize => m_entry.Size * 8u - Math.Max( 8u, m_entry.UnusedBytes ); //I don't understand why unused is less than 8 sometimes
+
+        protected override IEnumerable<MemoryRegionBase> GetSubRegions( DbgEngDebugger debugger )
         {
             bool free = (m_entry.Flags & 0x1) == 0;
             bool @internal = (m_entry.Flags & 0x8) != 0;
-            var actualSize = m_entry.Size * 8u - Math.Max( 8u, m_entry.UnusedBytes ); //I don't understand why unused is less than 8 sometimes
             var entryBodyAddr = BaseAddress + 8;
             var desc = free ? HeaderFree : @internal ? HeaderInternal : Header;
             yield return new LeafRegion( BaseAddress, 8, base.Description.Append(desc) );
@@ -295,18 +326,18 @@ namespace MS.Dbg.AddressRegionProviders
                             unused = 8;
                         }
                         yield return new LeafRegion( new Address( entryAddr , BaseAddress.Is32Bit ), 8, base.Description.Append( free ? LfhHeaderFree : LfhHeader ));
-                        actualSize = blockSize - unused;
-                        yield return new LeafRegion( new Address( entryAddr + 8, BaseAddress.Is32Bit ), actualSize, base.Description.Append( $" LFH Entry Body ({actualSize:X,White})" ) );
+                        var actualSize = blockSize - unused;
+                        yield return new LeafRegion( new Address( entryAddr + 8, BaseAddress.Is32Bit ), actualSize, base.Description.Append( $" LFH Entry Body (0x{actualSize:X,White} bytes)" ) );
                     }
                 }
                 else
                 {
-                    yield return new LeafRegion( new Address( entryBodyAddr, BaseAddress.Is32Bit ), actualSize, base.Description.Append( " Internal Data" ) );
+                    yield return new LeafRegion( new Address( entryBodyAddr, BaseAddress.Is32Bit ), EntrySize, base.Description.Append( " Internal Data" ) );
                 }
             }
             else
             {
-                yield return new LeafRegion( new Address(entryBodyAddr, BaseAddress.Is32Bit), actualSize, base.Description.Append( $" Entry Body ({actualSize:X,White})"));
+                yield return new LeafRegion( new Address(entryBodyAddr, BaseAddress.Is32Bit), EntrySize, base.Description.Append( $" Entry Body ({EntrySize:X,White})"));
             }
         }
     }

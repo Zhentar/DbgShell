@@ -3,29 +3,74 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
 using Microsoft.Diagnostics.Runtime.Interop;
 using MS.Dbg.AddressRegionProviders;
 
 namespace MS.Dbg
 {
-    public interface IMemoryRegion : ISupportColor
+    [ DebuggerDisplay( "{BaseAddress} + {Size}" ) ]
+    public abstract class MemoryRegionBase : IEquatable< MemoryRegionBase >, ISupportColor
     {
-        Address BaseAddress { get; }
-        ulong Size { get; }
-        IEnumerable<IMemoryRegion> SubRegions { get; }
+        protected MemoryRegionBase( ulong baseAddress, ulong size, DbgEngDebugger debugger )
+            : this( baseAddress, size, debugger.TargetIs32Bit )
+        {
+        }
+
+        protected MemoryRegionBase( ulong baseAddress, ulong size, bool is32bit )
+            : this( new Address( baseAddress, is32bit ), size )
+        {
+        }
+
+        protected MemoryRegionBase( Address baseAddress, ulong size )
+        {
+            BaseAddress = baseAddress;
+            Size = size;
+        }
+
+        public ColorString ToColorString()
+        {
+            var cs = BaseAddress.ToColorString( ConsoleColor.DarkYellow );
+            cs.Append( " - " );
+            cs.Append( (BaseAddress + Size).ToColorString( ConsoleColor.DarkYellow ) );
+            cs.Append( " " );
+            cs.Append( Description );
+            return cs;
+        }
+
+        public abstract ColorString Description { get; }
+
+        public Address BaseAddress { get; }
+
+        public ulong Size { get; }
+
+        public abstract IEnumerable< MemoryRegionBase > SubRegions { get; }
+
+        public bool Equals( MemoryRegionBase other )
+        {
+            if( ReferenceEquals( null, other ) )
+            {
+                return false;
+            }
+            if( ReferenceEquals( this, other ) )
+            {
+                return true;
+            }
+            return BaseAddress.Equals( other.BaseAddress ) && Size == other.Size;
+        }
+
+        public override bool Equals( object obj ) => ReferenceEquals( this, obj ) || obj is MemoryRegionBase other && Equals( other );
+
+        public override int GetHashCode() => (BaseAddress.GetHashCode() * 397) ^ Size.GetHashCode();
     }
 
     public interface IRegionProvider
     {
-        IEnumerable<IMemoryRegion> IdentifyRegions( DbgEngDebugger debugger );
+        IEnumerable< MemoryRegionBase > IdentifyRegions( DbgEngDebugger debugger );
     }
 
     public class AddressMap
     {
-        private static readonly List<IRegionProvider> sm_regionProviders = new List<IRegionProvider>();
+        private static readonly List< IRegionProvider > sm_regionProviders = new List< IRegionProvider >();
 
         static AddressMap()
         {
@@ -55,12 +100,11 @@ namespace MS.Dbg
                 sm_initDone = true;
             }
 
-            return sm_cachedAddressMap ?? (sm_cachedAddressMap = debugger.ExecuteOnDbgEngThread( () => BuildAddressMap( debugger )));
+            return sm_cachedAddressMap ?? (sm_cachedAddressMap = debugger.ExecuteOnDbgEngThread( () => BuildAddressMap( debugger ) ));
         }
 
         private static AddressMap BuildAddressMap( DbgEngDebugger debugger )
         {
-
             var result = new AddressMap();
             var addrList = result.m_addresses;
 
@@ -88,9 +132,9 @@ namespace MS.Dbg
                     }
                     var region = new VirtualAllocRegion( info, debugger );
                     address += region.Size;
-                    if( !(addressesIdx < addrList.Count 
+                    if( !(addressesIdx < addrList.Count
                           && addrList[ addressesIdx ].BaseAddress <= region.BaseAddress
-                          && addrList[ addressesIdx ].BaseAddress + addrList[ addressesIdx ].Size >= region.BaseAddress + region.Size))
+                          && addrList[ addressesIdx ].BaseAddress + addrList[ addressesIdx ].Size >= region.BaseAddress + region.Size) )
                     {
                         addrList.Add( region );
                     }
@@ -108,7 +152,7 @@ namespace MS.Dbg
 
         public static MemoryRegionStack GetMemoryRegionsForAddress( DbgEngDebugger debugger, ulong address )
         {
-            var results = new List<IMemoryRegion>();
+            var results = new List< MemoryRegionBase >();
             var map = GetAddressMap( debugger );
 
             foreach( var region in map.Regions )
@@ -118,7 +162,7 @@ namespace MS.Dbg
                     var currRegion = region;
                     do
                     {
-                        IMemoryRegion nextRegion = null;
+                        MemoryRegionBase nextRegion = null;
                         results.Add( currRegion );
                         foreach( var subRegion in currRegion.SubRegions )
                         {
@@ -137,12 +181,12 @@ namespace MS.Dbg
             return new MemoryRegionStack( results );
         }
 
-        public IEnumerable<IMemoryRegion> Regions => m_addresses;
+        public IEnumerable< MemoryRegionBase > Regions => m_addresses;
 
         private readonly MemoryRegionList m_addresses = new MemoryRegionList();
     }
 
-    internal class MemoryRegionList : SortedList<IMemoryRegion>
+    internal class MemoryRegionList : SortedList< MemoryRegionBase >
     {
         private static readonly MemoryRegionComparer sm_comparer = new MemoryRegionComparer();
 
@@ -150,7 +194,7 @@ namespace MS.Dbg
         {
         }
 
-        public MemoryRegionList( IEnumerable<IMemoryRegion> values ) : this()
+        public MemoryRegionList( IEnumerable< MemoryRegionBase > values ) : this()
         {
             foreach( var val in values )
             {
@@ -159,9 +203,9 @@ namespace MS.Dbg
         }
 
 
-        private class MemoryRegionComparer : IComparer<IMemoryRegion>
+        private class MemoryRegionComparer : IComparer< MemoryRegionBase >
         {
-            public int Compare( IMemoryRegion x, IMemoryRegion y )
+            public int Compare( MemoryRegionBase x, MemoryRegionBase y )
             {
                 if( x is null )
                 {
@@ -173,48 +217,35 @@ namespace MS.Dbg
         }
     }
 
-    [DebuggerDisplay( "{BaseAddress} + {Size} (Leaf)" )]
-    internal class LeafRegion : IMemoryRegion
+    [ DebuggerDisplay( "{BaseAddress} + {Size} (Leaf)" ) ]
+    public class LeafRegion : MemoryRegionBase
     {
         public LeafRegion( Address baseAddress, ulong size, ColorString description )
+            : base( baseAddress, size )
         {
-            m_description = description;
-            BaseAddress = baseAddress;
-            Size = size;
+            Description = description;
         }
 
-        public ColorString ToColorString()
-        {
-            var cs = BaseAddress.ToColorString( ConsoleColor.DarkYellow );
-            cs.Append( " - " );
-            cs.Append( (BaseAddress + Size).ToColorString( ConsoleColor.DarkYellow ) );
-            cs.Append( " " );
-            cs.Append( m_description );
-            return cs;
-        }
-
-        private readonly ColorString m_description;
-        public Address BaseAddress { get; }
-        public ulong Size { get; }
-        public IEnumerable<IMemoryRegion> SubRegions { get { yield break; } }
+        public override ColorString Description { get; }
+        public override IEnumerable< MemoryRegionBase > SubRegions { get { yield break; } }
     }
 
-    public class MemoryRegionStack : ISupportColor, IEquatable<MemoryRegionStack>, IReadOnlyList<IMemoryRegion>
+    public class MemoryRegionStack : ISupportColor, IEquatable< MemoryRegionStack >, IReadOnlyList< MemoryRegionBase >
     {
-        private readonly IReadOnlyList<IMemoryRegion> m_regions;
+        private readonly IReadOnlyList< MemoryRegionBase > m_regions;
 
-        public MemoryRegionStack( IReadOnlyList<IMemoryRegion> regions ) => m_regions = regions;
+        public MemoryRegionStack( IReadOnlyList< MemoryRegionBase > regions ) => m_regions = regions;
 
         public ColorString ToColorString() => ToColorString( false );
- 
-        public ColorString ToColorString(bool allLevels)
+
+        public ColorString ToColorString( bool allLevels )
         {
             if( !allLevels )
             {
                 return m_regions[ m_regions.Count - 1 ].ToColorString();
             }
             var cs = new ColorString();
-            
+
             foreach( var region in m_regions )
             {
                 if( cs.Length > 0 ) { cs.Append( "\n" ); }
@@ -225,7 +256,7 @@ namespace MS.Dbg
 
         public bool Equals( MemoryRegionStack other )
         {
-            if( other?.m_regions.Count != this.m_regions.Count ) { return false; }
+            if( other?.m_regions.Count != m_regions.Count ) { return false; }
             for( int i = 0; i < m_regions.Count; i++ )
             {
                 if( m_regions[ i ].BaseAddress != other.m_regions[ i ].BaseAddress
@@ -237,125 +268,84 @@ namespace MS.Dbg
             return true;
         }
 
-        public IEnumerator< IMemoryRegion > GetEnumerator() => m_regions.GetEnumerator();
+        public IEnumerator< MemoryRegionBase > GetEnumerator() => m_regions.GetEnumerator();
 
         IEnumerator IEnumerable.GetEnumerator() => ((IEnumerable) m_regions).GetEnumerator();
 
         public int Count => m_regions.Count;
 
-        public IMemoryRegion this[ int index ] => m_regions[ index ];
+        public MemoryRegionBase this[ int index ] => m_regions[ index ];
     }
 
-    [DebuggerDisplay( "{BaseAddress} + {Size} ({m_subRegions.Count})" )]
-    internal abstract class MemoryRegionBase : IMemoryRegion
+    [ DebuggerDisplay( "{BaseAddress} + {Size} ({m_subRegions.Count})" ) ]
+    public abstract class ChildCachingMemoryRegion : MemoryRegionBase
     {
-        protected MemoryRegionBase( ulong baseAddress, ulong size, DbgEngDebugger debugger )
+        protected ChildCachingMemoryRegion( ulong baseAddress, ulong size, DbgEngDebugger debugger )
+            : base( baseAddress, size, debugger )
         {
-            BaseAddress = new Address( baseAddress, debugger.TargetIs32Bit );
-            Size = size;
-            Debugger = debugger;
+            m_debugger = debugger;
         }
 
-        public ColorString ToColorString()
-        {
-            var cs = BaseAddress.ToColorString( ConsoleColor.DarkYellow );
-            cs.Append( " - " );
-            cs.Append( (BaseAddress + Size).ToColorString( ConsoleColor.DarkYellow ) );
-            cs.Append( " " );
-            cs.Append( Description );
-            return cs;
-        }
+        protected readonly DbgEngDebugger m_debugger;
+        private SortedList< MemoryRegionBase > m_subRegions;
 
-        protected abstract ColorString Description { get; }
-
-        public Address BaseAddress { get; }
-
-        public ulong Size { get; }
-
-        protected readonly DbgEngDebugger Debugger;
-
-        public IEnumerable<IMemoryRegion> SubRegions => m_subRegions ?? (m_subRegions = new MemoryRegionList( GetSubRegions( Debugger ) ));
-
-        private SortedList<IMemoryRegion> m_subRegions;
-
-        protected abstract IEnumerable<IMemoryRegion> GetSubRegions( DbgEngDebugger debugger );
+        public override IEnumerable< MemoryRegionBase > SubRegions => m_subRegions ?? (m_subRegions = new MemoryRegionList( GetSubRegions( m_debugger ) ));
+        protected abstract IEnumerable< MemoryRegionBase > GetSubRegions( DbgEngDebugger debugger );
     }
 
 
-    public class VirtualAllocRegion : IMemoryRegion
+    public class VirtualAllocRegion : MemoryRegionBase
     {
         private static readonly ColorString Unknown = new ColorString( ConsoleColor.DarkGray, "<unknown>" );
         private static readonly ColorString Mapped = new ColorString( ConsoleColor.DarkMagenta, "<MAPPED>" );
 
-        public VirtualAllocRegion( MEMORY_BASIC_INFORMATION64 info, DbgEngDebugger debugger )
+        internal VirtualAllocRegion( MEMORY_BASIC_INFORMATION64 info, DbgEngDebugger debugger )
+            : this( info, debugger, GetInfoDetails( info, debugger ) )
+        {
+        }
+
+        private VirtualAllocRegion( MEMORY_BASIC_INFORMATION64 info, DbgEngDebugger debugger, (ulong size, List< VirtualAllocSubRegion > subRegions) details )
+            : base( info.BaseAddress, details.size, debugger )
         {
             Type = info.Type;
-            var is32bit = debugger.TargetIs32Bit;
-            BaseAddress = new Address( info.AllocationBase, is32bit );
+            SubRegions = details.subRegions;
+        }
 
-            var subRegions = new List<VirtualAllocSubRegion>();
+
+        private static (ulong size, List< VirtualAllocSubRegion > subRegions) GetInfoDetails( MEMORY_BASIC_INFORMATION64 info, DbgEngDebugger debugger )
+        {
+            var is32bit = debugger.TargetIs32Bit;
+            var baseAddress = info.AllocationBase;
+
+            var subRegions = new List< VirtualAllocSubRegion >();
 
             ulong currAddress = info.AllocationBase;
             do
             {
                 currAddress += info.RegionSize;
                 subRegions.Add( new VirtualAllocSubRegion( info, is32bit ) );
-            } while( debugger.TryQueryVirtual( currAddress, out info ) == 0 && info.AllocationBase == BaseAddress );
+            } while( debugger.TryQueryVirtual( currAddress, out info ) == 0 && info.AllocationBase == baseAddress );
 
-            Size = currAddress - BaseAddress;
-            m_subRegions = subRegions;
+            return (currAddress - baseAddress, subRegions);
         }
 
-        private readonly IReadOnlyList<VirtualAllocSubRegion> m_subRegions;
-
-        public Address BaseAddress { get; }
-
-        public ulong Size { get; }
+        public override IEnumerable< MemoryRegionBase > SubRegions { get; }
 
         public MEM Type { get; }
+        public override ColorString Description => new ColorString( $"MEM_{Type} " ).Append( Type == MEM.MAPPED ? Mapped : Unknown );
+    }
 
-        public IEnumerable<IMemoryRegion> SubRegions => m_subRegions;
-
-        public ColorString ToColorString()
+    public class VirtualAllocSubRegion : LeafRegion
+    {
+        internal VirtualAllocSubRegion( MEMORY_BASIC_INFORMATION64 info, bool is32bit )
+            : base( new Address( info.BaseAddress, is32bit ), info.RegionSize,
+                    new ColorString( $" PAGE_{info.Protect} " ).AppendPushPopFg( ConsoleColor.DarkGray, "<unknown>" ) )
         {
-            var cs = BaseAddress.ToColorString( ConsoleColor.DarkYellow );
-            cs.Append( " - " );
-            cs.Append( (BaseAddress + Size).ToColorString( ConsoleColor.DarkYellow ) );
-            cs.Append( $" MEM_{Type} " );
-            cs.Append( Type == MEM.MAPPED ? Mapped : Unknown );
-            return cs;
+            State = info.State;
+            Protect = info.Protect;
         }
 
-        public class VirtualAllocSubRegion : IMemoryRegion
-        {
-            public VirtualAllocSubRegion( MEMORY_BASIC_INFORMATION64 info, bool is32bit )
-            {
-                BaseAddress = new Address( info.BaseAddress, is32bit );
-                Size = info.RegionSize;
-                State = info.State;
-                Protect = info.Protect;
-            }
-
-            public Address BaseAddress { get; }
-
-            public ulong Size { get; }
-
-            public MEM State { get; }
-
-            public PAGE Protect { get; }
-
-            public IEnumerable<IMemoryRegion> SubRegions => Enumerable.Empty<IMemoryRegion>();
-
-            public ColorString ToColorString()
-            {
-                var cs = new ColorString( "VirtualAlloc " );
-                cs.Append( BaseAddress.ToColorString( ConsoleColor.DarkYellow ) );
-                cs.Append( " - " );
-                cs.Append( (BaseAddress + Size).ToColorString( ConsoleColor.DarkYellow ) );
-                cs.Append( $" PAGE_{State}" );
-                cs.Append( new ColorString( ConsoleColor.DarkGray, "<unknown>" ) );
-                return cs;
-            }
-        }
+        public MEM State { get; }
+        public PAGE Protect { get; }
     }
 }

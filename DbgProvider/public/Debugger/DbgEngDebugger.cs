@@ -3250,7 +3250,7 @@ namespace MS.Dbg
 
         private const string _NT_SYMBOL_PATH = "_NT_SYMBOL_PATH";
 
-        private void _TryEnsureSymbolsLoaded( DbgModuleInfo mod, CancellationToken cancelToken )
+        internal void _TryEnsureSymbolsLoaded( DbgModuleInfo mod, CancellationToken cancelToken )
         {
             if( null == m_sympath )
             {

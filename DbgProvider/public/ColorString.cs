@@ -318,6 +318,15 @@ namespace MS.Dbg
             return this;
         }
 
+        public ColorString Append( ISupportColor other )
+        {
+            if( null == other )
+                return this;
+
+            Append( other.ToColorString() );
+            return this;
+        }
+
         public ColorString AppendLine( ColorString other )
         {
             Append( other );

@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 namespace MS.Dbg.Commands
 {
     [Cmdlet( VerbsCommon.Get, "DbgAddressMap" )]
-    [OutputType( typeof( IMemoryRegion ) )]
+    [OutputType( typeof( MemoryRegionBase ) )]
     public class GetDbgAddressMap : DbgBaseCommand
     {
         [Parameter( Mandatory = false,
