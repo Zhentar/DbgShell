@@ -126,12 +126,13 @@ namespace MS.Dbg
                 }
                 else
                 {
-                    while( addressesIdx < addrList.Count && (addrList[ addressesIdx ].BaseAddress + addrList[ addressesIdx ].Size) < info.BaseAddress )
+                    while( addressesIdx < addrList.Count && (addrList[ addressesIdx ].BaseAddress + addrList[ addressesIdx ].Size) <= info.BaseAddress )
                     {
                         addressesIdx++;
                     }
                     var region = new VirtualAllocRegion( info, debugger );
                     address += region.Size;
+
                     if( !(addressesIdx < addrList.Count
                           && addrList[ addressesIdx ].BaseAddress <= region.BaseAddress
                           && addrList[ addressesIdx ].BaseAddress + addrList[ addressesIdx ].Size >= region.BaseAddress + region.Size) )

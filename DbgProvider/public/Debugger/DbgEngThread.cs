@@ -142,12 +142,23 @@ namespace MS.Dbg
 
             public TRet Execute< TRet >( Func< TRet > f )
             {
+                if( _IsOnPipelineThread )
+                {
+                    return f();
+                }
                 return Util.Await( ExecuteAsync( f ) );
             }
 
             public void Execute( Action a )
             {
-                Util.Await( ExecuteAsync( a ) );
+                if(_IsOnPipelineThread)
+                {
+                    a();
+                }
+                else
+                {
+                    Util.Await( ExecuteAsync( a ) );
+                }
             }
 
             private static void _CrashOnException( Action action )

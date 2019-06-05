@@ -261,12 +261,16 @@ namespace MS.Dbg.AddressRegionProviders
 
     internal class HeapEntryRegion : HeapRegionBase
     {
-        private static readonly ColorString Header         = new ColorString( ConsoleColor.Gray, " Entry Header " );
-        private static readonly ColorString HeaderFree     = Header.AppendPushPopFgBg( ConsoleColor.Black, ConsoleColor.Gray, "(free)" );
-        private static readonly ColorString HeaderInternal = Header.AppendPushPopFgBg( ConsoleColor.Black, ConsoleColor.Gray, "(internal)" );
 
+        private static readonly ColorString Free     = new ColorString( ConsoleColor.Black, ConsoleColor.Gray, "(free)" );
+        private static readonly ColorString Internal = new ColorString( ConsoleColor.Black, ConsoleColor.Gray, "(internal)" );
+
+        private static readonly ColorString Header         = new ColorString( ConsoleColor.Gray, " Entry Header " );
+        private static readonly ColorString HeaderFree     = Header.Append( Free );
+        private static readonly ColorString HeaderInternal = Header.Append( Internal );
         private static readonly ColorString LfhHeader      = new ColorString( ConsoleColor.Gray, " LFH Entry Header " );
-        private static readonly ColorString LfhHeaderFree  = LfhHeader.AppendPushPopFgBg( ConsoleColor.Black, ConsoleColor.Gray, "(free)" );
+        private static readonly ColorString LfhHeaderFree  = LfhHeader.Append(Free);
+
 
         public HeapEntryRegion( ulong heapBase, ColorString heapName, _HEAP_ENTRY entry, ulong baseAddress, HeapTypeCache typeCache, DbgEngDebugger debugger ) 
             : base(heapBase, heapName, baseAddress, entry.Size * 8u, typeCache, debugger)
@@ -310,7 +314,7 @@ namespace MS.Dbg.AddressRegionProviders
                         entriesStart += userdataHeaderType.Size;
                     }
 
-                    yield return new LeafRegion( new Address( entryBodyAddr, BaseAddress.Is32Bit ), entriesStart - entryBodyAddr, base.Description.Append( " LFH Block Header" ));
+                    yield return new LeafRegion( new Address( entryBodyAddr, BaseAddress.Is32Bit ), entriesStart - entryBodyAddr, base.Description.Append( " LFH Block Header " ).Append( free ? Free : ColorString.Empty ));
 
                     var endAddr = entriesStart + blockCount * blockSize;
                     for( var entryAddr = entriesStart; entryAddr < endAddr; entryAddr += blockSize )
@@ -327,17 +331,17 @@ namespace MS.Dbg.AddressRegionProviders
                         }
                         yield return new LeafRegion( new Address( entryAddr , BaseAddress.Is32Bit ), 8, base.Description.Append( free ? LfhHeaderFree : LfhHeader ));
                         var actualSize = blockSize - unused;
-                        yield return new LeafRegion( new Address( entryAddr + 8, BaseAddress.Is32Bit ), actualSize, base.Description.Append( $" LFH Entry Body (0x{actualSize:X,White} bytes)" ) );
+                        yield return new LeafRegion( new Address( entryAddr + 8, BaseAddress.Is32Bit ), actualSize, base.Description.Append( $" LFH Entry Body {(free ? Free : ColorString.Empty)}(0x{actualSize:X,White} bytes)" ) );
                     }
                 }
                 else
                 {
-                    yield return new LeafRegion( new Address( entryBodyAddr, BaseAddress.Is32Bit ), EntrySize, base.Description.Append( " Internal Data" ) );
+                    yield return new LeafRegion( new Address( entryBodyAddr, BaseAddress.Is32Bit ), EntrySize, base.Description.Append( " Internal Data " ).Append( free ? Free : ColorString.Empty ) );
                 }
             }
             else
             {
-                yield return new LeafRegion( new Address(entryBodyAddr, BaseAddress.Is32Bit), EntrySize, base.Description.Append( $" Entry Body ({EntrySize:X,White})"));
+                yield return new LeafRegion( new Address(entryBodyAddr, BaseAddress.Is32Bit), EntrySize, base.Description.Append( $" Entry Body {(free ? Free : ColorString.Empty)}(0x{EntrySize:X,White} bytes)"));
             }
         }
     }
