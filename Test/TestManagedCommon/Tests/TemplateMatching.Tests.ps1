@@ -195,6 +195,38 @@ Describe "TemplateMatching" {
         $ti1.Parameters[ 0 ].FullName | Should Be '<lambda_fcd0511faf603cca0b560671c4e52d53>'
     }
 
+    It "can deal with non-template dotnet names" {
+
+        $noneOfTheseAreTemplates = @(
+            # The CLR uses brackets to make types not usable in C#; it's not a template.
+            'MS.Dbg.IMAGEHLP_MODULEW64+<LoadedImageName>e__FixedBuffer'
+
+            # This is a "fake" name (not observed in the wild; it's the same as the
+            # previous one but with the content between the angle brackets removed), but
+            # according to dotnet source, this sort of name should be possible.
+            'MS.Dbg.IMAGEHLP_MODULEW64+<>e__FixedBuffer'
+
+            # Minimal archetypal dotnet generated name:
+            '<>9__X'
+
+            # now with something inside the brackets
+            '<B>9__X'
+
+            # now with stuff in front of the brackets
+            'A<>9__X'
+            'A<B>9__X'
+        )
+
+        foreach( $nonTemplate in $noneOfTheseAreTemplates )
+        {
+            $ti1 = [MS.Dbg.DbgTemplateNode]::CrackTemplate( $nonTemplate )
+            $ti1.IsTemplate | Should Be $false 
+            $ti1.FullName | Should Be $nonTemplate
+            $ti1.TemplateName | Should Be $nonTemplate
+            ([MS.Dbg.DbgTemplateNode]::LooksLikeATemplateName( $nonTemplate )) | Should Be $false
+        }
+    }
+
     It "throws if the multi-match wildcard doesn't come last" {
 
         [bool] $itThrew = $false

@@ -1,9 +1,14 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Text;
+using System.Collections.Specialized;
+using MS.Dbg;
 
-namespace MS.Dbg
+using ConsoleHandle = Microsoft.Win32.SafeHandles.SafeFileHandle;
+
+namespace MS.DbgShell
+{
+// (unindented a level to simplify the diff with other similar copies of this code)
+internal static partial class ConsoleControl
 {
     // This class interprets ANSI escape sequences to alter the color of console output. Only
     // a limited set of control sequences are supported, namely a subset of SGR (Select
@@ -16,7 +21,7 @@ namespace MS.Dbg
     //     http://en.wikipedia.org/wiki/ISO_6429
     //     http://invisible-island.net/xterm/ctlseqs/ctlseqs.html
     //
-    internal class AnsiColorWriter : TextWriter
+    internal class AnsiColorWriter
     {
         private const char CSI = '\x9b';  // "Control Sequence Initiator" (single character, as opposed to '\x1b' + '[')
 
@@ -110,8 +115,8 @@ namespace MS.Dbg
 
         public AnsiColorWriter()
         {
-            DefaultForeground = Console.ForegroundColor;
-            DefaultBackground = Console.BackgroundColor;
+            DefaultForeground = ConsoleControl.ForegroundColor;
+            DefaultBackground = ConsoleControl.BackgroundColor;
 
             m_commandTreeRoot = new Dictionary< char, Func< Action< List< int > > > >()
             {
@@ -143,20 +148,7 @@ namespace MS.Dbg
         } // end constructor
 
 
-        public override Encoding Encoding { get { return Console.Out.Encoding; } }
-
-
-        public override void Write( char[] charBuffer, int index, int count)
-        {
-            Write( new String( charBuffer, index, count ) );
-        }
-
-        public override void Write( char c )
-        {
-            Write( c.ToString() );
-        }
-
-        public override void Write( string s )
+        public void Write( ConsoleHandle handle, string s )
         {
             int startIndex = 0;
 
@@ -172,14 +164,16 @@ namespace MS.Dbg
             {
                 //Tool.WL( "escIndex: {0}, startIndex: {1}", escIndex, startIndex );
                 string chunk = s.Substring( startIndex, escIndex - startIndex );
-                Console.Write( chunk );
+                //Console.Write( chunk );
+                ConsoleControl._RealWriteConsole( handle, chunk );
                 startIndex = _HandleControlSequence( s, escIndex );
                 escIndex = s.IndexOf( CSI, startIndex );
             }
 
             if( !(startIndex >= s.Length) )
             {
-                Console.Write( s.Substring( startIndex ) );
+                //Console.Write( s.Substring( startIndex ) );
+                ConsoleControl._RealWriteConsole( handle, s.Substring( startIndex ) );
             }
         } // end Write()
 
@@ -356,57 +350,43 @@ namespace MS.Dbg
         {
             if( 0 == code )
             {
-                Console.ForegroundColor = DefaultForeground;
-                Console.BackgroundColor = DefaultBackground;
+                ConsoleControl.ForegroundColor = DefaultForeground;
+                ConsoleControl.BackgroundColor = DefaultBackground;
             }
             else if( (code <= 37) && (code >= 30) )
             {
-                Console.ForegroundColor = AnsiNormalColorMap[ (code - 30) ];
+                ConsoleControl.ForegroundColor = AnsiNormalColorMap[ (code - 30) ];
             }
             else if( (code <= 47) && (code >= 40) )
             {
-                Console.BackgroundColor = AnsiNormalColorMap[ (code - 40) ];
+                ConsoleControl.BackgroundColor = AnsiNormalColorMap[ (code - 40) ];
             }
             else if( (code <= 97) && (code >= 90) )
             {
-                Console.ForegroundColor = AnsiBrightColorMap[ (code - 90) ];
+                ConsoleControl.ForegroundColor = AnsiBrightColorMap[ (code - 90) ];
             }
             else if( (code <= 107) && (code >= 100) )
             {
-                Console.BackgroundColor = AnsiBrightColorMap[ (code - 100) ];
+                ConsoleControl.BackgroundColor = AnsiBrightColorMap[ (code - 100) ];
             }
             else if( 56 == code ) // NON-STANDARD (I made this one up)
             {
                 Util.Fail( "The 56/57 SGR codes (non-standard push/pop) are deprecated. Use XTPUSHSGR/XTPOPSGR instead." );
-                m_colorStack.Push( new ColorPair( Console.ForegroundColor, Console.BackgroundColor ) );
+                m_colorStack.Push( new ColorPair( ConsoleControl.ForegroundColor, ConsoleControl.BackgroundColor ) );
             }
             else if( 57 == code ) // NON-STANDARD (I made this one up)
             {
                 Util.Fail( "The 56/57 SGR codes (non-standard push/pop) are deprecated. Use XTPUSHSGR/XTPOPSGR instead." );
                 ColorPair cp = m_colorStack.Pop();
-                Console.ForegroundColor = cp.Foreground;
-                Console.BackgroundColor = cp.Background;
+                ConsoleControl.ForegroundColor = cp.Foreground;
+                ConsoleControl.BackgroundColor = cp.Background;
             }
             else
             {
                 throw new NotSupportedException( String.Format( "SGR code '{0}' not supported.", code ) );
             }
         } // end _ProcessSgrCode()
-
-        public static void Test()
-        {
-            AnsiColorWriter colorWriter = new AnsiColorWriter();
-            colorWriter.Write( "\u009b91mThis should be red.\u009bm This should not.\r\n" );
-            colorWriter.Write( "\u009b91;41mThis should be red on red.\u009bm This should not.\r\n" );
-            colorWriter.Write( "\u009b91;100mThis should be red on gray.\u009b" );
-            colorWriter.Write( "m This should not.\r\n" );
-
-            colorWriter.Write( "\u009b" );
-            colorWriter.Write( "9" );
-            colorWriter.Write( "1;10" );
-            colorWriter.Write( "6mThis should be red on cyan.\u009b" );
-            colorWriter.Write( "m This should \u009bm\u009bmnot.\r\n" );
-        } // end Test
-
     } // end class AnsiColorWriter
-}
+} // class ConsoleControl
+} // namespace
+
