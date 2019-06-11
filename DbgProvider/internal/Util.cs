@@ -2467,6 +2467,17 @@ namespace MS.Dbg
                 return default( TRet ); // <-- unreachable code
             }
         } // end UnwrapTargetInvocationException()
+
+        private const ulong VirtualAllocGranularity = 0x1_0000;
+        public static ulong RoundUpToVirtualAllocGranularity(ulong value)
+        {
+            return (value + (VirtualAllocGranularity - 1)) & ~(VirtualAllocGranularity - 1);
+        }
+
+        public static ulong RoundDownToVirtualAllocGranularity( ulong value )
+        {
+            return value & ~(VirtualAllocGranularity - 1);
+        }
     } // end class Util
 }
 

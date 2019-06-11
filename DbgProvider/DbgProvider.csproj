@@ -165,6 +165,7 @@
     <Compile Include="public\DbgPluginInterfaces.cs" />
     <Compile Include="public\Debugger\Address.cs" />
     <Compile Include="public\Debugger\AddressMap.cs" />
+    <Compile Include="public\Debugger\AddressRegionProviders\ClrRegionProvider.cs" />
     <Compile Include="public\Debugger\AddressRegionProviders\ModuleRegionProvider.cs" />
     <Compile Include="public\Debugger\AddressRegionProviders\NativeHeapRegionProvider.cs" />
     <Compile Include="public\Debugger\BitHelper.cs" />

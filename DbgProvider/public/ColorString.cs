@@ -590,7 +590,7 @@ namespace MS.Dbg
 
             //protected override string Command { get { return "#}"; } } // "XTPOPSGR"
             protected override string Command { get { return "#q"; } } // NOT "XTPOPSGR"
-
+            
             public static readonly PopSgrSequence Instance = new PopSgrSequence();
         } // end class PopSgrSequence
 
@@ -655,11 +655,11 @@ namespace MS.Dbg
 
                     if( hasFg || hasBg )
                     {
-                        var sb = new StringBuilder( PushSgrSequence.Instance.ToString() );
+                        var sb = PushSgrSequence.Instance.AppendTo( new StringBuilder(), true );
                         var parameters = new List< int >( 2 );
                         if( hasFg ) { parameters.Add( CaStringUtil.ForegroundColorMap[ fgColor ] ); }
                         if( hasBg ) { parameters.Add( CaStringUtil.BackgroundColorMap[ bgColor ] ); }
-                        SgrControlSequence.AppendCommand( sb, parameters, "m" );
+                        ControlSequence.AppendCommand( sb, parameters, "m" );
 
                         if( arg is ISupportColor asColor )
                         {
@@ -670,7 +670,7 @@ namespace MS.Dbg
                             sb.Append( ArgumentToString( arg, formatPieces[ 0 ], true ) );
                         }
 
-                        sb.Append( PopSgrSequence.Instance.ToString() );
+                        PopSgrSequence.Instance.AppendTo( sb, true );
                         return sb.ToString();
                     }
 

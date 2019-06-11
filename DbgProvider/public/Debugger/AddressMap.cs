@@ -43,6 +43,8 @@ namespace MS.Dbg
 
         public ulong Size { get; }
 
+        public Address EndAddress => BaseAddress + Size;
+
         public abstract IEnumerable< MemoryRegionBase > SubRegions { get; }
 
         public bool Equals( MemoryRegionBase other )
@@ -76,6 +78,7 @@ namespace MS.Dbg
         {
             RegisterRegionProvider( new ModuleRegionProvider() );
             RegisterRegionProvider( new NativeHeapRegionProvider() );
+            RegisterRegionProvider( new ClrRegionProvider() );
         }
 
         public static void RegisterRegionProvider( IRegionProvider provider )
@@ -100,6 +103,7 @@ namespace MS.Dbg
                 sm_initDone = true;
             }
 
+            //TODO: thread through cancellation token!
             return sm_cachedAddressMap ?? (sm_cachedAddressMap = debugger.ExecuteOnDbgEngThread( () => BuildAddressMap( debugger ) ));
         }
 
@@ -130,12 +134,26 @@ namespace MS.Dbg
                     {
                         addressesIdx++;
                     }
+
                     var region = new VirtualAllocRegion( info, debugger );
                     address += region.Size;
+                    var regionEndAddress = region.BaseAddress + region.Size;
 
-                    if( !(addressesIdx < addrList.Count
-                          && addrList[ addressesIdx ].BaseAddress <= region.BaseAddress
-                          && addrList[ addressesIdx ].BaseAddress + addrList[ addressesIdx ].Size >= region.BaseAddress + region.Size) )
+                    var contiguousRegionStart = ulong.MaxValue;
+                    var contiguousRegionEnd = ulong.MaxValue;
+                    if( addressesIdx < addrList.Count )
+                    {
+                        contiguousRegionStart = addrList[ addressesIdx ].BaseAddress;
+                        contiguousRegionEnd = addrList[ addressesIdx ].EndAddress;
+                        while(contiguousRegionEnd < regionEndAddress && addressesIdx + 1 < addrList.Count && addrList[ addressesIdx + 1].BaseAddress == contiguousRegionEnd)
+                        {
+                            addressesIdx++;
+                            contiguousRegionEnd = addrList[ addressesIdx ].EndAddress;
+                        }
+                    }
+
+
+                    if( contiguousRegionStart > region.BaseAddress || contiguousRegionEnd < region.EndAddress )
                     {
                         addrList.Add( region );
                     }
@@ -324,7 +342,7 @@ namespace MS.Dbg
             do
             {
                 currAddress += info.RegionSize;
-                subRegions.Add( new VirtualAllocSubRegion( info, is32bit ) );
+                subRegions.Add( new VirtualAllocSubRegion( info, is32bit, info.Type == MEM.MAPPED ? Mapped : Unknown ) );
             } while( debugger.TryQueryVirtual( currAddress, out info ) == 0 && info.AllocationBase == baseAddress );
 
             return (currAddress - baseAddress, subRegions);
@@ -333,14 +351,26 @@ namespace MS.Dbg
         public override IEnumerable< MemoryRegionBase > SubRegions { get; }
 
         public MEM Type { get; }
-        public override ColorString Description => new ColorString( $"MEM_{Type} " ).Append( Type == MEM.MAPPED ? Mapped : Unknown );
+        public override ColorString Description
+        {
+            get
+            {
+                var cs = new ColorString( $"MEM_{Type} " );
+                if(SubRegions.Count() == 1)
+                {
+                    var region = SubRegions.First();
+                    return cs.Append( region.Description );
+                }
+                return cs.Append( Type == MEM.MAPPED ? Mapped : Unknown );
+            }
+        }
     }
 
     public class VirtualAllocSubRegion : LeafRegion
     {
-        internal VirtualAllocSubRegion( MEMORY_BASIC_INFORMATION64 info, bool is32bit )
+        internal VirtualAllocSubRegion( MEMORY_BASIC_INFORMATION64 info, bool is32bit, ColorString detail )
             : base( new Address( info.BaseAddress, is32bit ), info.RegionSize,
-                    new ColorString( $" PAGE_{info.Protect} " ).AppendPushPopFg( ConsoleColor.DarkGray, "<unknown>" ) )
+                    new ColorString( $"MEM_{info.State} PAGE_{(info.Protect == 0 ? PAGE.NOACCESS : info.Protect)} " ).Append( detail ) )
         {
             State = info.State;
             Protect = info.Protect;

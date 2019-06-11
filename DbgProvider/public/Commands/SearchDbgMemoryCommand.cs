@@ -116,7 +116,7 @@ namespace MS.Dbg.Commands
             var startPage = startAddress & 0xFFFF_FFFF_FFFF_F000;
             var curPage = startPage;
 
-            Span<byte> bytes = stackalloc byte[4096];
+            Span<byte> bytes = stackalloc byte[65536];
             while (curPage < endAddress && Debugger.TryQueryVirtual(curPage, out var info) == 0 && !ct.IsCancellationRequested)
             {
                 var regionEnd = Math.Min( endAddress,  info.BaseAddress + info.RegionSize);
@@ -128,18 +128,26 @@ namespace MS.Dbg.Commands
 
                 if ((info.State & MEM.COMMIT) != 0 && CheckMemType(info.Type, MemoryType))
                 {
-                    for (var page = info.BaseAddress; page < regionEnd; page += 4096)
+                    for (var page = info.BaseAddress; page < regionEnd; page += (ulong)bytes.Length)
                     {
-                        if (Debugger.TryReadVirtualDirect(page, bytes))
+                        var readbuffer = bytes;
+                        if(page + (uint)readbuffer.Length > regionEnd)
                         {
-                            //TODO: skip leading portion of first page and trailing portion of last page as needed
+                            readbuffer = readbuffer.Slice( 0, (int)(regionEnd - page) );
+                        }
+                        if (Debugger.TryReadVirtualDirect(page, readbuffer))
+                        {
+                            if(page < startAddress)
+                            {
+                                readbuffer = readbuffer.Slice( (int) (startAddress - page) );
+                            }
                             if (searchType == SearchSize.DWord)
                             {
-                                SearchPage<uint, UintIntegralTypeHelper>(yield, bytes, searchMask, searchValue, page);
+                                SearchBlock<uint, UintIntegralTypeHelper>(yield, readbuffer, searchMask, searchValue, page);
                             }
                             else
                             {
-                                SearchPage<ulong, UlongIntegralTypeHelper>(yield, bytes, searchMask, searchValue, page);
+                                SearchBlock<ulong, UlongIntegralTypeHelper>(yield, readbuffer, searchMask, searchValue, page);
                             }
                         }
                     }
@@ -163,7 +171,7 @@ namespace MS.Dbg.Commands
             }
         }
 
-        private unsafe void SearchPage<T, THelper>(Action<DbgMemory> yield, Span<byte> bytes, ulong searchMask, ulong searchValue, ulong page) where T : unmanaged where THelper : struct, IIntegralTypeHelper<T>
+        private unsafe void SearchBlock<T, THelper>(Action<DbgMemory> yield, Span<byte> bytes, ulong searchMask, ulong searchValue, ulong page) where T : unmanaged where THelper : struct, IIntegralTypeHelper<T>
         {
             THelper helper = default;
             T value = helper.ConvertUlong(searchValue);

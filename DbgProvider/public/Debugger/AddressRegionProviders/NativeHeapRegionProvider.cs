@@ -40,7 +40,7 @@ namespace MS.Dbg.AddressRegionProviders
             var segmentList = (ulong) heap.SegmentList.DbgGetOperativeSymbol().Address;
             ulong encoding = heap.Encoding.AgregateCode.ToUint64( null );
             bool is32bit = debugger.TargetIs32Bit;
-            var heapName = isDefaultHeap ? new ColorString(ConsoleColor.DarkGray, "Default Heap") : FindHeapSymbol( heapBase, debugger, dataSections, is32bit );
+            var heapName = isDefaultHeap ? new ColorString(ConsoleColor.Cyan, "Default Heap") : FindHeapSymbol( heapBase, debugger, dataSections, is32bit );
             heapName = heapName ?? new ColorString( "Heap " ).Append( new Address( heapBase, debugger ) );
             
 
@@ -50,11 +50,30 @@ namespace MS.Dbg.AddressRegionProviders
                 yield return region;
             }
             ulong virtAllocHead = heap.VirtualAllocdBlocks.DbgGetOperativeSymbol().Address;
-            var commitSizeOffset = is32bit ? 0x10u : 0x20u;
             foreach( var heapBlock in debugger.EnumerateLIST_ENTRY_raw( virtAllocHead, 0 ) )
             {
-                var size = debugger.ReadMemAs_UInt32( heapBlock + commitSizeOffset );
-                yield return new LeafRegion( new Address( heapBlock, debugger ), size,   new ColorString(heapName).Append(" VirtualAllocBlock") );
+                ulong size;
+                if( is32bit )
+                {
+                    size = debugger.ReadMemAs_UInt32( heapBlock + 0x10 );
+                }
+                else
+                {
+                    size = debugger.ReadMemAs<ulong>( heapBlock + 0x20 );
+                }
+
+                var startOffset = heapBlock;
+                var roundedDownBlock = Util.RoundDownToVirtualAllocGranularity( heapBlock );
+
+                if(roundedDownBlock != heapBlock)
+                {
+                    //TODO: handle these in a more understandable way
+                    size += (uint)(heapBlock - roundedDownBlock); //leading offset so that base addr is less predictable
+                    size += 0x1000; //trailing guard page
+                    startOffset = roundedDownBlock;
+                }
+                //TODO: include the actual allocation as a subregion
+                yield return new LeafRegion( new Address( startOffset, debugger ), size,   new ColorString(heapName).Append(" VirtualAllocBlock") );
             }
         }
 
@@ -120,10 +139,10 @@ namespace MS.Dbg.AddressRegionProviders
             }
             if( possibleSymbols.Count == 0 && noSymbolMatches.Count == 1 )
             {
-                return new ColorString( ConsoleColor.Magenta, $"{noSymbolMatches[ 0 ].mod.Name}!{noSymbolMatches[ 0 ].offset:X}" );
+                return new ColorString( ConsoleColor.DarkCyan, $"{noSymbolMatches[ 0 ].mod.Name}!{noSymbolMatches[ 0 ].offset:X}" );
             }
 
-            var heapName = possibleSymbols.Count == 1 ? new ColorString( ConsoleColor.Magenta, possibleSymbols[ 0 ] ) : null;
+            var heapName = possibleSymbols.Count == 1 ? new ColorString( ConsoleColor.Cyan, possibleSymbols[ 0 ] ) : null;
             return heapName;
 
             bool isNoSymbolType( DEBUG_SYMTYPE type )
@@ -222,6 +241,9 @@ namespace MS.Dbg.AddressRegionProviders
         {
             ulong baseAddress = (ulong) segment.BaseAddress.DbgGetPointer();
             ulong endAddress = (ulong) segment.LastValidEntry.DbgGetPointer();
+            //Round up to virtal alloc granularity, because some Windows versions use the last page as a guard
+            //(and I don't know any better way to account for it)
+            endAddress = Util.RoundUpToVirtualAllocGranularity( endAddress );
             return endAddress - baseAddress;
         }
 

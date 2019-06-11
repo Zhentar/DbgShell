@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using Microsoft.Diagnostics.Runtime;
 
 namespace MS.Dbg.AddressRegionProviders
@@ -8,6 +9,7 @@ namespace MS.Dbg.AddressRegionProviders
     {
         public IEnumerable< MemoryRegionBase > IdentifyRegions( DbgEngDebugger debugger )
         {
+            var NativeModules = new HashSet<string>();
             var is32bit = debugger.TargetIs32Bit;
             foreach( var module in debugger.Modules )
             {
@@ -17,6 +19,7 @@ namespace MS.Dbg.AddressRegionProviders
                     break;
                 }
                 yield return new NativeModuleRegion( module );
+                NativeModules.Add( module.Name );
             }
 
             foreach( var runtime in debugger.GetCurrentTarget().ClrRuntimes )
@@ -25,7 +28,12 @@ namespace MS.Dbg.AddressRegionProviders
                 {
                     if( clrModule.ImageBase > 0 )
                     {
-                        yield return new ClrModuleRegion( clrModule, is32bit );
+                        var region = new ClrModuleRegion( clrModule, is32bit );
+                        if( !NativeModules.Contains( region.ModuleName ) &&
+                            !NativeModules.Contains( region.ModuleName.Replace('.','_') + "_ni"))
+                        {
+                            yield return region;
+                        }
                     }
                 }
             }
@@ -40,7 +48,7 @@ namespace MS.Dbg.AddressRegionProviders
         }
 
         public abstract string ModuleName { get; }
-        public override ColorString Description => new ColorString( ConsoleColor.Cyan, ModuleName );
+        public override ColorString Description => new ColorString( ConsoleColor.White, ModuleName );
     }
 
     internal class NativeModuleRegion : ModuleRegion
@@ -78,7 +86,7 @@ namespace MS.Dbg.AddressRegionProviders
 
         private readonly ClrModule m_moduleInfo;
 
-        public override string ModuleName => m_moduleInfo.Name;
+        public override string ModuleName => Path.GetFileNameWithoutExtension( m_moduleInfo.AssemblyName );
 
         public override IEnumerable< MemoryRegionBase > SubRegions
         {
