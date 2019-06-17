@@ -143,7 +143,7 @@
     </PostBuildEvent>
     <!-- for previous versions of VS? -->
     <PostBuildEvent Condition="!exists('$(VCInstallDir)redist\MSVC\$(VCRedistVersion)\onecore\debug_nonredist\$(PlatformShortName)\Microsoft.VC141.DebugCRT')">
-      <Command>xcopy "$(VCInstallDir)redist\MSVC\$(VCRedistVersion)\debug_nonredist\$(PlatformShortName)\Microsoft.VC141.DebugCRT\*.dll" "$(OutDir)"    /D /Y &amp;&amp; xcopy "$(UCRTContentRoot)\bin\$(WindowsTargetPlatformVersion)\$(PlatformTarget)\ucrt\*.dll" "$(OutDir)" /D /Y </Command>
+      <Command>xcopy "$(VCInstallDir)redist\MSVC\$(VCToolsRedistVersion)\debug_nonredist\$(PlatformShortName)\Microsoft.VC141.DebugCRT\*.dll" "$(OutDir)"    /D /Y &amp;&amp; xcopy "$(UCRTContentRoot)\bin\$(WindowsTargetPlatformVersion)\$(PlatformTarget)\ucrt\*.dll" "$(OutDir)" /D /Y </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -198,7 +198,7 @@
     </PostBuildEvent>
     <!-- for previous versions of VS? -->
     <PostBuildEvent Condition="!exists('$(VCInstallDir)redist\MSVC\$(VCRedistVersion)\onecore\$(PlatformShortName)\Microsoft.VC141.CRT')">
-      <Command>xcopy "$(VCInstallDir)redist\MSVC\$(VCRedistVersion)\$(PlatformShortName)\Microsoft.VC141.CRT\*.dll" "$(OutDir)" /D /Y</Command>
+      <Command>xcopy "$(VCInstallDir)redist\MSVC\$(VCToolsRedistVersion)\$(PlatformShortName)\Microsoft.VC141.CRT\*.dll" "$(OutDir)" /D /Y</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
