@@ -360,62 +360,27 @@ namespace MS.Dbg.Formatting.Commands
             PSObject pso = obj as PSObject;
             if( null != pso )
             {
-                // Check if there is a custom .ToString() method attached to this
-                // PSObject. (which is used, for instance, for displaying enum values)
-
-                var toStringMethods = Util.TryGetCustomToStringMethod( pso );
-
-                if( null != toStringMethods )
-                {
-                    // TODO: check overloads/signature?
-                    obj = toStringMethods.Invoke();
-                    if( obj is string )
-                    {
-                        return sb.Append( (string) obj );
-                    }
-                    else
-                    {
-                        LogManager.Trace( "Interesting... a custom .ToString() method returned something besides a string." );
-                    }
-                }
-                else
-                {
-                    obj = pso.BaseObject;
-                }
+                obj = pso.BaseObject;
             }
 
-            ColorString cs = obj as ColorString;
-            if( null != cs )
+            switch( obj )
             {
-                sb.Append( cs.ToString( DbgProvider.HostSupportsColor ) );
-            }
-            else
-            {
-                ISupportColor isc = obj as ISupportColor;
-                if( null != isc )
-                {
-                    sb.Append( isc.ToColorString().ToString( DbgProvider.HostSupportsColor ) );
-                }
-                else
-                {
-                    string renderedFormatString = null;
-                    if( null != formatString )
-                    {
-                        renderedFormatString = formatString.ToString( DbgProvider.HostSupportsColor );
-                    }
+                case ColorString cs:
+                    return sb.Append( cs.ToString( DbgProvider.HostSupportsColor ) );
+                case ISupportColor isc:
+                    return sb.Append( isc.ToColorString().ToString( DbgProvider.HostSupportsColor ) );
+                default:
+                    string renderedFormatString = formatString?.ToString( DbgProvider.HostSupportsColor );
 
                     if( !String.IsNullOrEmpty( renderedFormatString ) )
                     {
-                        sb.Append( Util.CcSprintf( renderedFormatString, obj ) );
+                        return sb.Append( Util.CcSprintf( renderedFormatString, pso ?? obj ) );
                     }
                     else
                     {
-                        // TODO: Or should it be pso.ToString here?
-                        sb.Append( obj.ToString() );
+                        return sb.Append( (pso ?? obj).ToString() );
                     }
-                }
             }
-            return sb;
         } // end ObjectToMarkedUpString()
 
 

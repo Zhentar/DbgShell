@@ -1012,7 +1012,7 @@ namespace MS.Dbg
                 DbgEngContext ctx;
                 try
                 {
-                    ctx = GetCurrentDbgEngContext();
+                    ctx = GetCurrentDbgEngContextCached();
                     ctx.TryAsTargetContext( out ctx );
 
                     if( null == ctx )
@@ -2017,7 +2017,7 @@ namespace MS.Dbg
         private DbgEngContext _GetTargetContextOrThrow()
         {
             DbgEngContext ctx;
-            if( !GetCurrentDbgEngContext().TryAsTargetContext( out ctx ) )
+            if( !GetCurrentDbgEngContextCached().TryAsTargetContext( out ctx ) )
             {
                 throw new DbgProviderException( "No current target.",
                                                 "NoCurrentTarget",
@@ -4230,6 +4230,18 @@ namespace MS.Dbg
                 } );
         }
 
+        /// <summary>
+        ///    Gets the most recently retrieved dbgeng.dll context, if it's valid.
+        ///    Retrieves the current context otherwise.
+        /// </summary>
+        public DbgEngContext GetCurrentDbgEngContextCached()
+        {
+            if( m_cachedContext != null && m_cachedContext != DbgEngContext.CurrentOrNone )
+            {
+                return m_cachedContext;
+            }
+            return GetCurrentDbgEngContext();
+        }
 
         /// <summary>
         ///    Gets a DbgEngContext object that represents dbgeng.dll's current context.

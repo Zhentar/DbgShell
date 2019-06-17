@@ -107,6 +107,7 @@
     <Compile Include="internal\PsContextHelper.cs" />
     <Compile Include="internal\PSLazyPropertyInfo.cs" />
     <Compile Include="internal\RunspaceSettings.cs" />
+    <Compile Include="internal\ScriptHelpers.cs" />
     <Compile Include="internal\ScriptLoader.cs" />
     <Compile Include="internal\SimplePSPropertyInfo.cs" />
     <Compile Include="internal\SortedList.cs" />

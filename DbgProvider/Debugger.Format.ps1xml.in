@@ -347,6 +347,7 @@
         <ViewSelectedBy>
           <TypeName>MS.Dbg.ColorString</TypeName>
         </ViewSelectedBy>
+        <OutOfBand />
         <CustomControl>
           <CustomEntries>
             <CustomEntry>

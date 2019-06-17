@@ -129,32 +129,6 @@ function Protect-NullString( $s )
 
 <#
 .SYNOPSIS
-    If an object implements IEnumerable, returns it.
-
-.DESCRIPTION
-    This is similar to PSObjectHelper.GetEnumerable, which counts IDictionaries as
-    IEnumerable even though LanguagePrimitives does not.
-#>
-function GetEnumerable( [object] $obj )
-{
-    $enumerable = [System.Management.Automation.LanguagePrimitives]::GetEnumerable( $obj )
-    if( $null -ne $enumerable )
-    {
-        Write-Collection $enumerable
-        return
-    }
-    # This is similar to PSObjectHelper.GetEnumerable.
-    if( $obj -is [System.Collections.IDictionary] )
-    {
-        Write-Collection ([System.Collections.IDictionary] $obj)
-        return
-    }
-    return $null
-}
-
-
-<#
-.SYNOPSIS
     Enumerates an IEnumerable.
 
 .DESCRIPTION
@@ -995,7 +969,7 @@ function New-ColorString
     end { }
     process
     {
-        $cs = New-Object "MS.Dbg.ColorString"
+        $cs = [MS.Dbg.ColorString]::new()
         [bool] $pushed = $false
 
         if( $PSBoundParameters.ContainsKey( 'Foreground' ) )
@@ -1600,8 +1574,9 @@ function Out-Default
             {
                 return
             }
-
-            $private:enumerable = GetEnumerable $objToDealWith
+            
+            # [zhent] - Using the GetEnumerator PS function requires setting up & binding a new command in the pipeline for every input, so use a C# function to dodge the pipeline overhead
+            $private:enumerable = [MS.Dbg.ScriptHelpers]::GetEnumerable( $objToDealWith )
             if( $null -ne $enumerable )
             {
                 $null = $PSBoundParameters.Remove( 'InputObject' )
@@ -1609,8 +1584,8 @@ function Out-Default
                 return
             } # end if( it's enumerable )
 
-
-            $private:formatInfo = Get-AltFormatViewDef -ForObject $objToDealWith
+            # [zhent] - Same as GetEnumerable, use a C# function to dodge the pipeline overhead
+            $private:formatInfo = [MS.Dbg.Formatting.AltFormattingManager]::ChooseFormatInfoForPSObject( $objToDealWith, $null )
 
             if( $null -eq $formatInfo )
             {
@@ -1814,8 +1789,9 @@ function Out-String
             {
                 return
             }
-
-            $private:enumerable = GetEnumerable $objToDealWith
+            
+            # [zhent] - Using the GetEnumerator PS function requires setting up & binding a new command in the pipeline for every input, so use a C# function to dodge the pipeline overhead
+            $private:enumerable = [MS.Dbg.ScriptHelpers]::GetEnumerable( $objToDealWith )
             if( $null -ne $enumerable )
             {
                 $null = $PSBoundParameters.Remove( 'InputObject' )
@@ -1823,8 +1799,8 @@ function Out-String
                 return
             } # end if( it's enumerable )
 
-
-            $private:formatInfo = Get-AltFormatViewDef -ForObject $objToDealWith
+            # [zhent] - Same as GetEnumerable, use a C# function to dodge the pipeline overhead
+            $private:formatInfo = [MS.Dbg.Formatting.AltFormattingManager]::ChooseFormatInfoForPSObject( $objToDealWith, $null )
 
             if( $null -eq $formatInfo )
             {
@@ -2064,7 +2040,7 @@ function Format-Table
             }
             else
             {
-                if( $enableDebugSpew )
+                if( $enableDebugSpew )sss
                 {
                     [Console]::WriteLine( "        FtProxy: Dollar-underbar object of type: {0}", $_.GetType().FullName )
                 }
@@ -2082,8 +2058,9 @@ function Format-Table
             # If -Expand Both, then we always format the current object as a list, then
             # enumerate it and apply the desired formatting to those.
             [bool] $private:skipNormalFormatting = $false
-
-            $private:enumerable = GetEnumerable $objToDealWith
+            
+            # [zhent] - Using the GetEnumerator PS function requires setting up & binding a new command in the pipeline for every input, so use a C# function to dodge the pipeline overhead
+            $private:enumerable = [MS.Dbg.ScriptHelpers]::GetEnumerable( $objToDealWith )
             if( $null -ne $enumerable )
             {
                 if( $Expand -eq 'CoreOnly' )
@@ -2405,8 +2382,9 @@ function Format-List
             # If -Expand Both, then we always format the current object as a list, then
             # enumerate it and apply the desired formatting to those.
             [bool] $private:skipNormalFormatting = $false
-
-            $private:enumerable = GetEnumerable $objToDealWith
+            
+            # [zhent] - Using the GetEnumerator PS function requires setting up & binding a new command in the pipeline for every input, so use a C# function to dodge the pipeline overhead
+            $private:enumerable = [MS.Dbg.ScriptHelpers]::GetEnumerable( $objToDealWith )
             if( $null -ne $enumerable )
             {
                 if( $Expand -eq 'CoreOnly' )
@@ -2711,8 +2689,9 @@ function Format-Custom
             # If -Expand Both, then we always format the current object as a list, then
             # enumerate it and apply the desired formatting to those.
             [bool] $private:skipNormalFormatting = $false
-
-            $private:enumerable = GetEnumerable $objToDealWith
+            
+            # [zhent] - Using the GetEnumerator PS function requires setting up & binding a new command in the pipeline for every input, so use a C# function to dodge the pipeline overhead
+            $private:enumerable = [MS.Dbg.ScriptHelpers]::GetEnumerable( $objToDealWith )
             if( $null -ne $enumerable )
             {
                 if( $Expand -eq 'CoreOnly' )

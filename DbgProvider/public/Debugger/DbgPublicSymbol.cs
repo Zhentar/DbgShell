@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using Microsoft.Diagnostics.Runtime.Interop;
 using DbgEngWrapper;
 
@@ -127,7 +128,7 @@ namespace MS.Dbg
             {
                 if( null == m_mod )
                 {
-                    m_mod = new DbgModuleInfo( Debugger, SymbolInfo.ModBase, Target );
+                    m_mod = Target.Modules.FirstOrDefault( m => m.BaseAddress == SymbolInfo.ModBase );
                 }
                 return m_mod;
             }

@@ -17,7 +17,7 @@ namespace MS.Dbg
                 throw new ArgumentNullException( "temporaryContext" );
 
             m_debugger = debugger;
-            m_oldContext = debugger.GetCurrentDbgEngContext();
+            m_oldContext = debugger.GetCurrentDbgEngContextCached();
             Context = temporaryContext;
             debugger.SetCurrentDbgEngContext( temporaryContext, true );
         } // end constructor

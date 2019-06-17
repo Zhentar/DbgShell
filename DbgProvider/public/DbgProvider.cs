@@ -844,7 +844,7 @@ namespace MS.Dbg
             if( null == debugger )
                 throw new ArgumentNullException( "debugger" );
 
-            var curCtx = debugger.GetCurrentDbgEngContext();
+            var curCtx = debugger.GetCurrentDbgEngContextCached();
             return _GetTopLevelContainerForContext( curCtx );
         } // end GetNsTargetByCurrentDebuggerContext()
 

@@ -175,7 +175,7 @@ namespace MS.Dbg
             : base( debugger )
         {
             if( null == context )
-                context = debugger.GetCurrentDbgEngContext();
+                context = debugger.GetCurrentDbgEngContextCached();
 
             if( null == frame )
                 frame = debugger.GetCurrentScopeFrame();

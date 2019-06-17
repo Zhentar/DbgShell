@@ -9,6 +9,13 @@ namespace MS.Dbg.Formatting.Commands
     {
         protected override void ApplyViewToInputObject()
         {
+            // Short-circuit the formatting pipeline for a simple identity operation
+            if( InputObject.ImmediateBaseObject is ColorString cs )
+            {
+                WriteObject( cs.ToString( DbgProvider.HostSupportsColor ) );
+                return;
+            }
+
             var script = m_view.Script;
             if( m_view.PreserveScriptContext )
             {
